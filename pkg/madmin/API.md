@@ -36,10 +36,12 @@ func main() {
 
 ```
 
-| Service operations         | Info operations  | LockInfo operations         | Healing operations                    | Config operations         | Misc                                |
-|:------------------------------------|:----------------------------|:----------------------------|:--------------------------------------|:--------------------------|:------------------------------------|
-| [`ServiceStatus`](#ServiceStatus)   | [`ServerInfo`](#ServerInfo) | [`ListLocks`](#ListLocks)   | [`Heal`](#Heal)             | [`GetConfig`](#GetConfig) | [`SetCredentials`](#SetCredentials) |
-| [`ServiceSendAction`](#ServiceSendAction) | | [`ClearLocks`](#ClearLocks) |            | [`SetConfig`](#SetConfig) |                                     |
+| Service operations         | Info operations  | Healing operations                    | Config operations        | Top operations        | IAM operations | Misc                                |
+|:----------------------------|:----------------------------|:--------------------------------------|:--------------------------|:--------------------------|:------------------------------------|:------------------------------------|
+| [`ServiceStatus`](#ServiceStatus) | [`ServerInfo`](#ServerInfo) | [`Heal`](#Heal) | [`GetConfig`](#GetConfig) | [`TopLocks`](#TopLocks) | [`AddUser`](#AddUser) | [`SetAdminCredentials`](#SetAdminCredentials) |
+| [`ServiceSendAction`](#ServiceSendAction) | [`ServerCPULoadInfo`](#ServerCPULoadInfo) | | [`SetConfig`](#SetConfig) | |  [`SetUserPolicy`](#SetUserPolicy) | [`StartProfiling`](#StartProfiling) |
+| |[`ServerMemUsageInfo`](#ServerMemUsageInfo) |            | [`GetConfigKeys`](#GetConfigKeys) | | [`ListUsers`](#ListUsers) | [`DownloadProfilingData`](#DownloadProfilingData) |
+| | |            | [`SetConfigKeys`](#SetConfigKeys) | | [`AddCannedPolicy`](#AddCannedPolicy) | |
 
 
 ## 1. Constructor
@@ -128,64 +130,65 @@ Sends a service action command to service - possible actions are restarting and 
 ### ServerInfo() ([]ServerInfo, error)
 Fetches information for all cluster nodes, such as server properties, storage information, network statistics, etc.
 
-| Param | Type | Description |
-|---|---|---|
-|`si.Addr` | _string_ | Address of the server the following information is retrieved from. |
-|`si.ConnStats` | _ServerConnStats_ | Connection statistics from the given server. |
-|`si.HTTPStats` | _ServerHTTPStats_ | HTTP connection statistics from the given server. |
-|`si.Properties` | _ServerProperties_ | Server properties such as region, notification targets. |
-|`si.Data.StorageInfo.Total`  | _int64_  | Total disk space. |
-|`si.Data.StorageInfo.Free`  | _int64_  | Free disk space. |
-|`si.Data.StorageInfo.Backend`| _struct{}_ | Represents backend type embedded structure. |
+| Param                           | Type               | Description                                                        |
+|---------------------------------|--------------------|--------------------------------------------------------------------|
+| `si.Addr`                       | _string_           | Address of the server the following information is retrieved from. |
+| `si.ConnStats`                  | _ServerConnStats_  | Connection statistics from the given server.                       |
+| `si.HTTPStats`                  | _ServerHTTPStats_  | HTTP connection statistics from the given server.                  |
+| `si.Properties`                 | _ServerProperties_ | Server properties such as region, notification targets.            |
+| `si.Data.StorageInfo.Used`      | _int64_            | Used disk space.                                                   |
+| `si.Data.StorageInfo.Total`     | _int64_            | Total disk space.                                                  |
+| `si.Data.StorageInfo.Available` | _int64_            | Available disk space.                                              |
+| `si.Data.StorageInfo.Backend`   | _struct{}_         | Represents backend type embedded structure.                        |
 
-| Param | Type | Description |
-|---|---|---|
-|`ServerProperties.Uptime`| _time.Duration_ | Total duration in seconds since server is running. |
-|`ServerProperties.Version`| _string_ | Current server version. |
-|`ServerProperties.CommitID` | _string_ | Current server commitID. |
-|`ServerProperties.Region` | _string_ | Configured server region. |
-|`ServerProperties.SQSARN` | _[]string_ | List of notification target ARNs. |
+| Param                       | Type            | Description                                        |
+|-----------------------------|-----------------|----------------------------------------------------|
+| `ServerProperties.Uptime`   | _time.Duration_ | Total duration in seconds since server is running. |
+| `ServerProperties.Version`  | _string_        | Current server version.                            |
+| `ServerProperties.CommitID` | _string_        | Current server commitID.                           |
+| `ServerProperties.Region`   | _string_        | Configured server region.                          |
+| `ServerProperties.SQSARN`   | _[]string_      | List of notification target ARNs.                  |
 
-| Param | Type | Description |
-|---|---|---|
-|`ServerConnStats.TotalInputBytes` | _uint64_ | Total bytes received by the server. |
-|`ServerConnStats.TotalOutputBytes` | _uint64_ | Total bytes sent by the server. |
+| Param                              | Type     | Description                         |
+|------------------------------------|----------|-------------------------------------|
+| `ServerConnStats.TotalInputBytes`  | _uint64_ | Total bytes received by the server. |
+| `ServerConnStats.TotalOutputBytes` | _uint64_ | Total bytes sent by the server.     |
 
-| Param | Type | Description |
-|---|---|---|
-|`ServerHTTPStats.TotalHEADStats`| _ServerHTTPMethodStats_ | Total statistics regarding HEAD operations |
-|`ServerHTTPStats.SuccessHEADStats`| _ServerHTTPMethodStats_ | Total statistics regarding successful HEAD operations |
-|`ServerHTTPStats.TotalGETStats`| _ServerHTTPMethodStats_ |  Total statistics regarding GET operations |
-|`ServerHTTPStats.SuccessGETStats`| _ServerHTTPMethodStats_ | Total statistics regarding successful GET operations |
-|`ServerHTTPStats.TotalPUTStats`| _ServerHTTPMethodStats_ | Total statistics regarding PUT operations |
-|`ServerHTTPStats.SuccessPUTStats`| _ServerHTTPMethodStats_ | Total statistics regarding successful PUT operations |
-|`ServerHTTPStats.TotalPOSTStats`| _ServerHTTPMethodStats_ | Total statistics regarding POST operations |
-|`ServerHTTPStats.SuccessPOSTStats`| _ServerHTTPMethodStats_ | Total statistics regarding successful POST operations |
-|`ServerHTTPStats.TotalDELETEStats`| _ServerHTTPMethodStats_ | Total statistics regarding DELETE operations |
-|`ServerHTTPStats.SuccessDELETEStats`| _ServerHTTPMethodStats_ | Total statistics regarding successful DELETE operations |
+| Param                                | Type                    | Description                                             |
+|--------------------------------------|-------------------------|---------------------------------------------------------|
+| `ServerHTTPStats.TotalHEADStats`     | _ServerHTTPMethodStats_ | Total statistics regarding HEAD operations              |
+| `ServerHTTPStats.SuccessHEADStats`   | _ServerHTTPMethodStats_ | Total statistics regarding successful HEAD operations   |
+| `ServerHTTPStats.TotalGETStats`      | _ServerHTTPMethodStats_ | Total statistics regarding GET operations               |
+| `ServerHTTPStats.SuccessGETStats`    | _ServerHTTPMethodStats_ | Total statistics regarding successful GET operations    |
+| `ServerHTTPStats.TotalPUTStats`      | _ServerHTTPMethodStats_ | Total statistics regarding PUT operations               |
+| `ServerHTTPStats.SuccessPUTStats`    | _ServerHTTPMethodStats_ | Total statistics regarding successful PUT operations    |
+| `ServerHTTPStats.TotalPOSTStats`     | _ServerHTTPMethodStats_ | Total statistics regarding POST operations              |
+| `ServerHTTPStats.SuccessPOSTStats`   | _ServerHTTPMethodStats_ | Total statistics regarding successful POST operations   |
+| `ServerHTTPStats.TotalDELETEStats`   | _ServerHTTPMethodStats_ | Total statistics regarding DELETE operations            |
+| `ServerHTTPStats.SuccessDELETEStats` | _ServerHTTPMethodStats_ | Total statistics regarding successful DELETE operations |
 
 
-| Param | Type | Description |
-|---|---|---|
-|`ServerHTTPMethodStats.Count` | _uint64_ | Total number of operations. |
-|`ServerHTTPMethodStats.AvgDuration` | _string_ | Average duration of Count number of operations. |
+| Param                               | Type     | Description                                     |
+|-------------------------------------|----------|-------------------------------------------------|
+| `ServerHTTPMethodStats.Count`       | _uint64_ | Total number of operations.                     |
+| `ServerHTTPMethodStats.AvgDuration` | _string_ | Average duration of Count number of operations. |
 
-| Param | Type | Description |
-|---|---|---|
-|`Backend.Type` | _BackendType_ | Type of backend used by the server currently only FS or Erasure. |
-|`Backend.OnlineDisks`| _int_ | Total number of disks online (only applies to Erasure backend), is empty for FS. |
-|`Backend.OfflineDisks` | _int_ | Total number of disks offline (only applies to Erasure backend), is empty for FS. |
-|`Backend.StandardSCData` | _int_ | Data disks set for standard storage class, is empty for FS. |
-|`Backend.StandardSCParity` | _int_ | Parity disks set for standard storage class, is empty for FS. |
-|`Backend.RRSCData` | _int_ | Data disks set for reduced redundancy storage class, is empty for FS. |
-|`Backend.RRSCParity` | _int_ | Parity disks set for reduced redundancy storage class, is empty for FS. |
-|`Backend.Sets` | _[][]DriveInfo_ | Represents topology of drives in erasure coded sets. |
+| Param                      | Type            | Description                                                                       |
+|----------------------------|-----------------|-----------------------------------------------------------------------------------|
+| `Backend.Type`             | _BackendType_   | Type of backend used by the server currently only FS or Erasure.                  |
+| `Backend.OnlineDisks`      | _int_           | Total number of disks online (only applies to Erasure backend), is empty for FS.  |
+| `Backend.OfflineDisks`     | _int_           | Total number of disks offline (only applies to Erasure backend), is empty for FS. |
+| `Backend.StandardSCData`   | _int_           | Data disks set for standard storage class, is empty for FS.                       |
+| `Backend.StandardSCParity` | _int_           | Parity disks set for standard storage class, is empty for FS.                     |
+| `Backend.RRSCData`         | _int_           | Data disks set for reduced redundancy storage class, is empty for FS.             |
+| `Backend.RRSCParity`       | _int_           | Parity disks set for reduced redundancy storage class, is empty for FS.           |
+| `Backend.Sets`             | _[][]DriveInfo_ | Represents topology of drives in erasure coded sets.                              |
 
-| Param | Type | Description |
-|---|---|---|
-|`DriveInfo.UUID`| _string_ | Unique ID for each disk provisioned by server format. |
-|`DriveInfo.Endpoint` | _string_ | Endpoint location of the remote/local disk. |
-|`DriveInfo.State` | _string_ | Current state of the disk at endpoint. |
+| Param                | Type     | Description                                           |
+|----------------------|----------|-------------------------------------------------------|
+| `DriveInfo.UUID`     | _string_ | Unique ID for each disk provisioned by server format. |
+| `DriveInfo.Endpoint` | _string_ | Endpoint location of the remote/local disk.           |
+| `DriveInfo.State`    | _string_ | Current state of the disk at endpoint.                |
 
  __Example__
 
@@ -202,43 +205,62 @@ Fetches information for all cluster nodes, such as server properties, storage in
 
  ```
 
+<a name="ServerDrivesPerfInfo"></a>
+### ServerDrivesPerfInfo() ([]ServerDrivesPerfInfo, error)
 
-## 5. Lock operations
+Fetches drive performance information for all cluster nodes. Returned value is in Bytes/s.
 
-<a name="ListLocks"></a>
-### ListLocks(bucket, prefix string, duration time.Duration) ([]VolumeLockInfo, error)
-If successful returns information on the list of locks held on ``bucket`` matching ``prefix`` for  longer than ``duration`` seconds.
+| Param | Type | Description |
+|---|---|---|
+|`di.Addr` | _string_ | Address of the server the following information is retrieved from. |
+|`di.Error` | _string _ | Errors (if any) encountered while reaching this node |
+|`di.DrivesPerf` | _disk.Performance_ | Path of the drive mount on above server and read, write speed. |
 
-__Example__
+| Param | Type | Description |
+|---|---|---|
+|`disk.Performance.Path` | _string_ | Path of drive mount. |
+|`disk.Performance.Error` | _string_ | Error (if any) encountered while accessing this drive. |
+|`disk.Performance.WriteSpeed` | _float64_ | Write speed on above path in Bytes/s. |
+|`disk.Performance.ReadSpeed` | _float64_ | Read speed on above path in Bytes/s. |
 
-``` go
-    volLocks, err := madmClnt.ListLocks("mybucket", "myprefix", 30 * time.Second)
-    if err != nil {
-        log.Fatalln(err)
-    }
-    log.Println("List of locks: ", volLocks)
+<a name="ServerCPULoadInfo"></a>
+### ServerCPULoadInfo() ([]ServerCPULoadInfo, error)
 
-```
+Fetches CPU utilization for all cluster nodes. Returned value is in Bytes.
 
-<a name="ClearLocks"></a>
-### ClearLocks(bucket, prefix string, duration time.Duration) ([]VolumeLockInfo, error)
-If successful returns information on the list of locks cleared on ``bucket`` matching ``prefix`` for longer than ``duration`` seconds.
+| Param | Type | Description |
+|-------|------|-------------|
+|`cpui.Addr` | _string_ | Address of the server the following information  is retrieved from. |
+|`cpui.Error` | _string_ | Errors (if any) encountered while reaching this node |
+|`cpui.CPULoad` | _cpu.Load_ | The load on the CPU. |
 
-__Example__
+| Param | Type | Description |
+|-------|------|-------------|
+|`cpu.Load.Avg` | _float64_ | The average utilization of the CPU measured in a 200ms interval |
+|`cpu.Load.Min` | _float64_ | The minimum utilization of the CPU measured in a 200ms interval |
+|`cpu.Load.Max` | _float64_ | The maximum utilization of the CPU measured in a 200ms interval |
+|`cpu.Load.Error` | _string_ | Error (if any) encountered while accesing the CPU info |
 
-``` go
-    volLocks, err := madmClnt.ClearLocks("mybucket", "myprefix", 30 * time.Second)
-    if err != nil {
-        log.Fatalln(err)
-    }
-    log.Println("List of locks cleared: ", volLocks)
+<a name="ServerMemUsageInfo"></a>
+### ServerMemUsageInfo() ([]ServerMemUsageInfo, error)
 
-```
+Fetches Mem utilization for all cluster nodes. Returned value is in Bytes.
+
+| Param | Type | Description |
+|-------|------|-------------|
+|`memi.Addr` | _string_ | Address of the server the following information  is retrieved from. |
+|`memi.Error` | _string_ | Errors (if any) encountered while reaching this node |
+|`memi.MemUsage` | _mem.Usage_ | The utilitzation of Memory |
+
+| Param | Type | Description |
+|-------|------|-------------|
+|`mem.Usage.Mem` | _uint64_ | The total number of bytes obtained from the OS |
+|`mem.Usage.Error` | _string_ | Error (if any) encountered while accesing the CPU info |
 
 ## 6. Heal operations
 
 <a name="Heal"></a>
-### Heal(bucket, prefix string, healOpts HealOpts, clientToken string, forceStart bool) (start HealStartSuccess, status HealTaskStatus, err error)
+### Heal(bucket, prefix string, healOpts HealOpts, clientToken string, forceStart bool, forceStop bool) (start HealStartSuccess, status HealTaskStatus, err error)
 
 Start a heal sequence that scans data under given (possible empty)
 `bucket` and `prefix`. The `recursive` bool turns on recursive
@@ -262,7 +284,8 @@ __Example__
             DryRun:    false,
     }
     forceStart := false
-    healPath, err := madmClnt.Heal("", "", opts, "", forceStart)
+    forceStop := false
+    healPath, err := madmClnt.Heal("", "", opts, "", forceStart, forceStop)
     if err != nil {
         log.Fatalln(err)
     }
@@ -303,7 +326,7 @@ __Example__
 
 <a name="GetConfig"></a>
 ### GetConfig() ([]byte, error)
-Get config.json of a minio setup.
+Get current `config.json` of a Minio server.
 
 __Example__
 
@@ -325,52 +348,202 @@ __Example__
 
 
 <a name="SetConfig"></a>
-### SetConfig(config io.Reader) (SetConfigResult, error)
-Set config.json of a minio setup and restart setup for configuration
-change to take effect.
-
-
-| Param  | Type  | Description  |
-|---|---|---|
-|`st.Status`            | _bool_  | true if set-config succeeded, false otherwise. |
-|`st.NodeSummary.Name`  | _string_  | Network address of the node. |
-|`st.NodeSummary.ErrSet`   | _bool_ | Bool representation indicating if an error is encountered with the node.|
-|`st.NodeSummary.ErrMsg`   | _string_ | String representation of the error (if any) on the node.|
-
+### SetConfig(config io.Reader) error
+Set a new `config.json` for a Minio server.
 
 __Example__
 
 ``` go
     config := bytes.NewReader([]byte(`config.json contents go here`))
-    result, err := madmClnt.SetConfig(config)
+    if err := madmClnt.SetConfig(config); err != nil {
+        log.Fatalf("failed due to: %v", err)
+    }
+    log.Println("SetConfig was successful")
+```
+
+<a name="GetConfigKeys"></a>
+### GetConfigKeys(keys []string) ([]byte, error)
+Get a json document which contains a set of keys and their values from config.json.
+
+__Example__
+
+``` go
+    configBytes, err := madmClnt.GetConfigKeys([]string{"version", "notify.amqp.1"})
     if err != nil {
         log.Fatalf("failed due to: %v", err)
     }
 
+    // Pretty-print config received as json.
     var buf bytes.Buffer
-    enc := json.NewEncoder(&buf)
-    enc.SetEscapeHTML(false)
-    enc.SetIndent("", "\t")
-    err = enc.Encode(result)
+    err = json.Indent(buf, configBytes, "", "\t")
     if err != nil {
-        log.Fatalln(err)
+        log.Fatalf("failed due to: %v", err)
     }
-    log.Println("SetConfig: ", string(buf.Bytes()))
+
+    log.Println("config received successfully: ", string(buf.Bytes()))
 ```
 
-## 8. Misc operations
 
-<a name="SetCredentials"></a>
-### SetCredentials() error
+<a name="SetConfigKeys"></a>
+### SetConfigKeys(params map[string]string) error
+Set a set of keys and values for Minio server or distributed setup and restart the Minio
+server for the new configuration changes to take effect.
+
+__Example__
+
+``` go
+    err := madmClnt.SetConfigKeys(map[string]string{"notify.webhook.1": "{\"enable\": true, \"endpoint\": \"http://example.com/api\"}"})
+    if err != nil {
+        log.Fatalf("failed due to: %v", err)
+    }
+
+    log.Println("New configuration successfully set")
+```
+
+## 8. Top operations
+
+<a name="TopLocks"></a>
+### TopLocks() (LockEntries, error)
+Get the oldest locks from Minio server.
+
+__Example__
+
+``` go
+    locks, err := madmClnt.TopLocks()
+    if err != nil {
+        log.Fatalf("failed due to: %v", err)
+    }
+
+    out, err := json.Marshal(locks)
+    if err != nil {
+        log.Fatalf("Marshal failed due to: %v", err)
+    }
+
+    log.Println("TopLocks received successfully: ", string(out))
+```
+
+## 9. IAM operations
+
+<a name="AddCannedPolicy"></a>
+### AddCannedPolicy(policyName string, policy string) error
+Create a new canned policy on Minio server.
+
+__Example__
+
+```
+	policy := `{"Version": "2012-10-17","Statement": [{"Action": ["s3:GetObject"],"Effect": "Allow","Resource": ["arn:aws:s3:::my-bucketname/*"],"Sid": ""}]}`
+
+    if err = madmClnt.AddCannedPolicy("get-only", policy); err != nil {
+		log.Fatalln(err)
+	}
+```
+
+<a name="AddUser"></a>
+### AddUser(user string, secret string) error
+Add a new user on a Minio server.
+
+__Example__
+
+``` go
+	if err = madmClnt.AddUser("newuser", "newstrongpassword"); err != nil {
+		log.Fatalln(err)
+	}
+```
+
+<a name="SetUserPolicy"></a>
+### SetUserPolicy(user string, policyName string) error
+Enable a canned policy `get-only` for a given user on Minio server.
+
+__Example__
+
+``` go
+	if err = madmClnt.SetUserPolicy("newuser", "get-only"); err != nil {
+		log.Fatalln(err)
+	}
+```
+
+<a name="ListUsers"></a>
+### ListUsers() (map[string]UserInfo, error)
+Lists all users on Minio server.
+
+__Example__
+
+``` go
+	users, err := madmClnt.ListUsers();
+    if err != nil {
+		log.Fatalln(err)
+	}
+    for k, v := range users {
+        fmt.Printf("User %s Status %s\n", k, v.Status)
+    }
+```
+
+## 10. Misc operations
+
+<a name="SetAdminCredentials"></a>
+### SetAdminCredentials() error
 Set new credentials of a Minio setup.
 
 __Example__
 
 ``` go
-    err = madmClnt.SetCredentials("YOUR-NEW-ACCESSKEY", "YOUR-NEW-SECRETKEY")
+    err = madmClnt.SetAdminCredentials("YOUR-NEW-ACCESSKEY", "YOUR-NEW-SECRETKEY")
     if err != nil {
             log.Fatalln(err)
     }
     log.Println("New credentials successfully set.")
 
+```
+
+<a name="StartProfiling"></a>
+### StartProfiling(profiler string) error
+Ask all nodes to start profiling using the specified profiler mode
+
+__Example__
+
+``` go
+    startProfilingResults, err = madmClnt.StartProfiling("cpu")
+    if err != nil {
+            log.Fatalln(err)
+    }
+    for _, result := range startProfilingResults {
+        if !result.Success {
+            log.Printf("Unable to start profiling on node `%s`, reason = `%s`\n", result.NodeName, result.Error)
+        } else {
+            log.Printf("Profiling successfully started on node `%s`\n", result.NodeName)
+        }
+    }
+
+```
+
+<a name="DownloadProfilingData"></a>
+### DownloadProfilingData() ([]byte, error)
+Download profiling data of all nodes in a zip format.
+
+__Example__
+
+``` go
+    profilingData, err := madmClnt.DownloadProfilingData()
+    if err != nil {
+            log.Fatalln(err)
+    }
+
+    profilingFile, err := os.Create("/tmp/profiling-data.zip")
+    if err != nil {
+            log.Fatal(err)
+    }
+
+    if _, err := io.Copy(profilingFile, profilingData); err != nil {
+            log.Fatal(err)
+    }
+
+    if err := profilingFile.Close(); err != nil {
+            log.Fatal(err)
+    }
+
+    if err := profilingData.Close(); err != nil {
+            log.Fatal(err)
+    }
+
+    log.Println("Profiling data successfully downloaded.")
 ```

@@ -66,8 +66,11 @@ var errVolumeNotEmpty = errors.New("volume is not empty")
 // errVolumeAccessDenied - cannot access volume, insufficient permissions.
 var errVolumeAccessDenied = errors.New("volume access denied")
 
-// errVolumeAccessDenied - cannot access file, insufficient permissions.
+// errFileAccessDenied - cannot access file, insufficient permissions.
 var errFileAccessDenied = errors.New("file access denied")
+
+// errFileParentIsFile - cannot have overlapping objects, parent is already a file.
+var errFileParentIsFile = errors.New("parent is a file")
 
 // errBitrotHashAlgoInvalid - the algo for bit-rot hash
 // verification is empty or invalid.
@@ -78,6 +81,12 @@ var errCrossDeviceLink = errors.New("Rename across devices not allowed, please f
 
 // errMinDiskSize - cannot create volume or files when disk size is less than threshold.
 var errMinDiskSize = errors.New("The disk size is less than the minimum threshold")
+
+// errLessData - returned when less data available than what was requested.
+var errLessData = errors.New("less data available than what was requested")
+
+// errMoreData = returned when more data was sent by the caller than what it was supposed to.
+var errMoreData = errors.New("more data was sent than what was advertised")
 
 // hashMisMatchError - represents a bit-rot hash verification failure
 // error.

@@ -66,12 +66,8 @@ func reduceErrs(errs []error, ignoredErrs []error) (maxCount int, maxErr error) 
 func reduceQuorumErrs(ctx context.Context, errs []error, ignoredErrs []error, quorum int, quorumErr error) error {
 	maxCount, maxErr := reduceErrs(errs, ignoredErrs)
 	if maxCount >= quorum {
-		if maxErr != errFileNotFound && maxErr != errVolumeNotFound {
-			logger.LogIf(ctx, maxErr)
-		}
 		return maxErr
 	}
-	logger.LogIf(ctx, quorumErr)
 	return quorumErr
 }
 
@@ -166,6 +162,13 @@ func parseXLErasureInfo(ctx context.Context, xlMetaBuf []byte) (ErasureInfo, err
 	erasure.Index = int(erasureResult.Get("index").Int())
 
 	checkSumsResult := erasureResult.Get("checksum").Array()
+
+	// Check for scenario where checksum information missing for some parts.
+	partsResult := gjson.GetBytes(xlMetaBuf, "parts").Array()
+	if len(checkSumsResult) != len(partsResult) {
+		return erasure, errCorruptedFormat
+	}
+
 	// Parse xlMetaV1.Erasure.Checksum array.
 	checkSums := make([]ChecksumInfo, len(checkSumsResult))
 	for i, v := range checkSumsResult {
@@ -179,22 +182,27 @@ func parseXLErasureInfo(ctx context.Context, xlMetaBuf []byte) (ErasureInfo, err
 			logger.LogIf(ctx, err)
 			return erasure, err
 		}
-		checkSums[i] = ChecksumInfo{Name: v.Get("name").String(), Algorithm: algorithm, Hash: hash}
+		name := v.Get("name").String()
+		if name == "" {
+			return erasure, errCorruptedFormat
+		}
+		checkSums[i] = ChecksumInfo{Name: name, Algorithm: algorithm, Hash: hash}
 	}
 	erasure.Checksums = checkSums
 	return erasure, nil
 }
 
-func parseXLParts(xlMetaBuf []byte) []objectPartInfo {
+func parseXLParts(xlMetaBuf []byte) []ObjectPartInfo {
 	// Parse the XL Parts.
 	partsResult := gjson.GetBytes(xlMetaBuf, "parts").Array()
-	partInfo := make([]objectPartInfo, len(partsResult))
+	partInfo := make([]ObjectPartInfo, len(partsResult))
 	for i, p := range partsResult {
-		info := objectPartInfo{}
+		info := ObjectPartInfo{}
 		info.Number = int(p.Get("number").Int())
 		info.Name = p.Get("name").String()
 		info.ETag = p.Get("etag").String()
 		info.Size = p.Get("size").Int()
+		info.ActualSize = p.Get("actualSize").Int()
 		partInfo[i] = info
 	}
 	return partInfo
@@ -241,7 +249,7 @@ func xlMetaV1UnmarshalJSON(ctx context.Context, xlMetaBuf []byte) (xlMeta xlMeta
 }
 
 // read xl.json from the given disk, parse and return xlV1MetaV1.Parts.
-func readXLMetaParts(ctx context.Context, disk StorageAPI, bucket string, object string) ([]objectPartInfo, map[string]string, error) {
+func readXLMetaParts(ctx context.Context, disk StorageAPI, bucket string, object string) ([]ObjectPartInfo, map[string]string, error) {
 	// Reads entire `xl.json`.
 	xlMetaBuf, err := disk.ReadAll(bucket, path.Join(object, xlMetaJSONFile))
 	if err != nil {
@@ -297,14 +305,20 @@ func readXLMeta(ctx context.Context, disk StorageAPI, bucket string, object stri
 	// Reads entire `xl.json`.
 	xlMetaBuf, err := disk.ReadAll(bucket, path.Join(object, xlMetaJSONFile))
 	if err != nil {
-		if err != errFileNotFound {
+		if err != errFileNotFound && err != errVolumeNotFound {
+			logger.GetReqInfo(ctx).AppendTags("disk", disk.String())
 			logger.LogIf(ctx, err)
 		}
 		return xlMetaV1{}, err
 	}
+	if len(xlMetaBuf) == 0 {
+		return xlMetaV1{}, errFileNotFound
+	}
 	// obtain xlMetaV1{} using `github.com/tidwall/gjson`.
 	xlMeta, err = xlMetaV1UnmarshalJSON(ctx, xlMetaBuf)
 	if err != nil {
+		logger.GetReqInfo(ctx).AppendTags("disk", disk.String())
+		logger.LogIf(ctx, err)
 		return xlMetaV1{}, err
 	}
 	// Return structured `xl.json`.
@@ -400,7 +414,7 @@ var (
 // calculatePartSizeFromIdx calculates the part size according to input index.
 // returns error if totalSize is -1, partSize is 0, partIndex is 0.
 func calculatePartSizeFromIdx(ctx context.Context, totalSize int64, partSize int64, partIndex int) (currPartSize int64, err error) {
-	if totalSize < 0 {
+	if totalSize < -1 {
 		logger.LogIf(ctx, errInvalidArgument)
 		return 0, errInvalidArgument
 	}

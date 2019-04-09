@@ -273,7 +273,7 @@ func initFormatFS(ctx context.Context, fsPath string) (rlk *lock.RLockedFile, er
 			rlk.Close()
 			return nil, err
 		}
-		logger.SetDeploymentID(id)
+		globalDeploymentID = id
 		return rlk, nil
 	}
 }
@@ -333,29 +333,43 @@ func formatFSFixDeploymentID(fsFormatPath string) error {
 		return nil
 	}
 
-	for {
-		wlk, err := lock.TryLockedOpenFile(fsFormatPath, os.O_RDWR, 0)
+	formatStartTime := time.Now().Round(time.Second)
+	getElapsedTime := func() string {
+		return time.Now().Round(time.Second).Sub(formatStartTime).String()
+	}
+
+	doneCh := make(chan struct{})
+	defer close(doneCh)
+
+	var wlk *lock.LockedFile
+	for range newRetryTimerSimple(doneCh) {
+		wlk, err = lock.TryLockedOpenFile(fsFormatPath, os.O_RDWR, 0)
 		if err == lock.ErrAlreadyLocked {
-			// Lock already present, sleep and attempt again.
-			time.Sleep(100 * time.Millisecond)
+			// Lock already present, sleep and attempt again
+			logger.Info("Another minio process(es) might be holding a lock to the file %s. Please kill that minio process(es) (elapsed %s)\n", fsFormatPath, getElapsedTime())
 			continue
 		}
 		if err != nil {
-			return err
-		}
-		defer wlk.Close()
-
-		err = jsonLoad(wlk, format)
-		if err != nil {
-			return err
+			break
 		}
 
-		// Check if it needs to be updated
+		if err = jsonLoad(wlk, format); err != nil {
+			break
+		}
+
+		// Check if format needs to be updated
 		if format.ID != "" {
-			return nil
+			err = nil
+			break
 		}
-		format.ID = mustGetUUID()
-		return jsonSave(wlk, format)
-	}
 
+		format.ID = mustGetUUID()
+		if err = jsonSave(wlk, format); err != nil {
+			break
+		}
+	}
+	if wlk != nil {
+		wlk.Close()
+	}
+	return err
 }

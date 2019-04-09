@@ -35,8 +35,8 @@ import (
 type ObjectKey [32]byte
 
 // GenerateKey generates a unique ObjectKey from a 256 bit external key
-// and a source of randomness. If random is nil the default PRNG of system
-// (crypto/rand) is used.
+// and a source of randomness. If random is nil the default PRNG of the
+// system (crypto/rand) is used.
 func GenerateKey(extKey [32]byte, random io.Reader) (key ObjectKey) {
 	if random == nil {
 		random = rand.Reader
@@ -50,6 +50,19 @@ func GenerateKey(extKey [32]byte, random io.Reader) (key ObjectKey) {
 	sha.Write(nonce[:])
 	sha.Sum(key[:0])
 	return key
+}
+
+// GenerateIV generates a new random 256 bit IV from the provided source
+// of randomness. If random is nil the default PRNG of the system
+// (crypto/rand) is used.
+func GenerateIV(random io.Reader) (iv [32]byte) {
+	if random == nil {
+		random = rand.Reader
+	}
+	if _, err := io.ReadFull(random, iv[:]); err != nil {
+		logger.CriticalIf(context.Background(), errOutOfEntropy)
+	}
+	return iv
 }
 
 // SealedKey represents a sealed object key. It can be stored
@@ -74,7 +87,6 @@ func (key ObjectKey) Seal(extKey, iv [32]byte, domain, bucket, object string) Se
 	mac.Write([]byte(SealAlgorithm))
 	mac.Write([]byte(path.Join(bucket, object))) // use path.Join for canonical 'bucket/object'
 	mac.Sum(sealingKey[:0])
-
 	if n, err := sio.Encrypt(&encryptedKey, bytes.NewReader(key[:]), sio.Config{Key: sealingKey[:]}); n != 64 || err != nil {
 		logger.CriticalIf(context.Background(), errors.New("Unable to generate sealed key"))
 	}
@@ -112,7 +124,7 @@ func (key *ObjectKey) Unseal(extKey [32]byte, sealedKey SealedKey, domain, bucke
 	}
 
 	if n, err := sio.Decrypt(&decryptedKey, bytes.NewReader(sealedKey.Key[:]), unsealConfig); n != 32 || err != nil {
-		return err // TODO(aead): upgrade sio to use sio.Error
+		return ErrSecretKeyMismatch
 	}
 	copy(key[:], decryptedKey.Bytes())
 	return nil
@@ -127,4 +139,38 @@ func (key ObjectKey) DerivePartKey(id uint32) (partKey [32]byte) {
 	mac.Write(bin[:])
 	mac.Sum(partKey[:0])
 	return partKey
+}
+
+// SealETag seals the etag using the object key.
+// It does not encrypt empty ETags because such ETags indicate
+// that the S3 client hasn't sent an ETag = MD5(object) and
+// the backend can pick an ETag value.
+func (key ObjectKey) SealETag(etag []byte) []byte {
+	if len(etag) == 0 { // don't encrypt empty ETag - only if client sent ETag = MD5(object)
+		return etag
+	}
+	var buffer bytes.Buffer
+	mac := hmac.New(sha256.New, key[:])
+	mac.Write([]byte("SSE-etag"))
+	if _, err := sio.Encrypt(&buffer, bytes.NewReader(etag), sio.Config{Key: mac.Sum(nil)}); err != nil {
+		logger.CriticalIf(context.Background(), errors.New("Unable to encrypt ETag using object key"))
+	}
+	return buffer.Bytes()
+}
+
+// UnsealETag unseals the etag using the provided object key.
+// It does not try to decrypt the ETag if len(etag) == 16
+// because such ETags indicate that the S3 client hasn't sent
+// an ETag = MD5(object) and the backend has picked an ETag value.
+func (key ObjectKey) UnsealETag(etag []byte) ([]byte, error) {
+	if !IsETagSealed(etag) {
+		return etag, nil
+	}
+	var buffer bytes.Buffer
+	mac := hmac.New(sha256.New, key[:])
+	mac.Write([]byte("SSE-etag"))
+	if _, err := sio.Decrypt(&buffer, bytes.NewReader(etag), sio.Config{Key: mac.Sum(nil)}); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
 }

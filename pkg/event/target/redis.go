@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/garyburd/redigo/redis"
+	"github.com/gomodule/redigo/redis"
 	"github.com/minio/minio/pkg/event"
 	xnet "github.com/minio/minio/pkg/net"
 )
@@ -170,7 +170,7 @@ func NewRedisTarget(id string, args RedisArgs) (*RedisTarget, error) {
 	}
 
 	return &RedisTarget{
-		id:   event.TargetID{id, "redis"},
+		id:   event.TargetID{ID: id, Name: "redis"},
 		args: args,
 		pool: pool,
 	}, nil

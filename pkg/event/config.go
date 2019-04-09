@@ -191,19 +191,18 @@ func (q Queue) ToRulesMap() RulesMap {
 
 // Unused.  Available for completion.
 type lambda struct {
-	common
 	ARN string `xml:"CloudFunction"`
 }
 
 // Unused. Available for completion.
 type topic struct {
-	common
 	ARN string `xml:"Topic" json:"Topic"`
 }
 
 // Config - notification configuration described in
 // http://docs.aws.amazon.com/AmazonS3/latest/dev/NotificationHowTo.html
 type Config struct {
+	XMLNS      string   `xml:"xmlns,attr,omitempty"`
 	XMLName    xml.Name `xml:"NotificationConfiguration"`
 	QueueList  []Queue  `xml:"QueueConfiguration,omitempty"`
 	LambdaList []lambda `xml:"CloudFunctionConfiguration,omitempty"`

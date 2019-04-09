@@ -33,52 +33,114 @@ const (
 
 	// S3XAmzServerSideEncryption - key representing x-amz-server-side-encryption HTTP header applicable
 	// to PutObject API only.
-	S3XAmzServerSideEncryption = "s3:x-amz-server-side-encryption"
-
-	// S3XAmzServerSideEncryptionAwsKMSKeyID - key representing x-amz-server-side-encryption-aws-kms-key-id
-	// HTTP header applicable to PutObject API only.
-	S3XAmzServerSideEncryptionAwsKMSKeyID = "s3:x-amz-server-side-encryption-aws-kms-key-id"
+	S3XAmzServerSideEncryption Key = "s3:x-amz-server-side-encryption"
 
 	// S3XAmzServerSideEncryptionCustomerAlgorithm - key representing
 	// x-amz-server-side-encryption-customer-algorithm HTTP header applicable to PutObject API only.
-	S3XAmzServerSideEncryptionCustomerAlgorithm = "s3:x-amz-server-side-encryption-customer-algorithm"
+	S3XAmzServerSideEncryptionCustomerAlgorithm Key = "s3:x-amz-server-side-encryption-customer-algorithm"
 
 	// S3XAmzMetadataDirective - key representing x-amz-metadata-directive HTTP header applicable to
 	// PutObject API only.
-	S3XAmzMetadataDirective = "s3:x-amz-metadata-directive"
+	S3XAmzMetadataDirective Key = "s3:x-amz-metadata-directive"
 
 	// S3XAmzStorageClass - key representing x-amz-storage-class HTTP header applicable to PutObject API
 	// only.
-	S3XAmzStorageClass = "s3:x-amz-storage-class"
+	S3XAmzStorageClass Key = "s3:x-amz-storage-class"
 
 	// S3LocationConstraint - key representing LocationConstraint XML tag of CreateBucket API only.
-	S3LocationConstraint = "s3:LocationConstraint"
+	S3LocationConstraint Key = "s3:LocationConstraint"
 
 	// S3Prefix - key representing prefix query parameter of ListBucket API only.
-	S3Prefix = "s3:prefix"
+	S3Prefix Key = "s3:prefix"
 
 	// S3Delimiter - key representing delimiter query parameter of ListBucket API only.
-	S3Delimiter = "s3:delimiter"
+	S3Delimiter Key = "s3:delimiter"
 
 	// S3MaxKeys - key representing max-keys query parameter of ListBucket API only.
-	S3MaxKeys = "s3:max-keys"
+	S3MaxKeys Key = "s3:max-keys"
 
 	// AWSReferer - key representing Referer header of any API.
-	AWSReferer = "aws:Referer"
+	AWSReferer Key = "aws:Referer"
 
 	// AWSSourceIP - key representing client's IP address (not intermittent proxies) of any API.
-	AWSSourceIP = "aws:SourceIp"
+	AWSSourceIP Key = "aws:SourceIp"
+
+	// AWSUserAgent - key representing UserAgent header for any API.
+	AWSUserAgent Key = "aws:UserAgent"
+
+	// AWSSecureTransport - key representing if the clients request is authenticated or not.
+	AWSSecureTransport Key = "aws:SecureTransport"
+
+	// AWSCurrentTime - key representing the current time.
+	AWSCurrentTime Key = "aws:CurrentTime"
+
+	// AWSEpochTime - key representing the current epoch time.
+	AWSEpochTime Key = "aws:EpochTime"
+
+	// AWSPrincipalType - user principal type currently supported values are "User" and "Anonymous".
+	AWSPrincipalType Key = "aws:principaltype"
+
+	// AWSUserID - user unique ID, in Minio this value is same as your user Access Key.
+	AWSUserID Key = "aws:userid"
+
+	// AWSUsername - user friendly name, in Minio this value is same as your user Access Key.
+	AWSUsername Key = "aws:username"
 )
+
+// AllSupportedKeys - is list of all all supported keys.
+var AllSupportedKeys = []Key{
+	S3XAmzCopySource,
+	S3XAmzServerSideEncryption,
+	S3XAmzServerSideEncryptionCustomerAlgorithm,
+	S3XAmzMetadataDirective,
+	S3XAmzStorageClass,
+	S3LocationConstraint,
+	S3Prefix,
+	S3Delimiter,
+	S3MaxKeys,
+	AWSReferer,
+	AWSSourceIP,
+	AWSUserAgent,
+	AWSSecureTransport,
+	AWSCurrentTime,
+	AWSEpochTime,
+	AWSPrincipalType,
+	AWSUserID,
+	AWSUsername,
+	// Add new supported condition keys.
+}
+
+// CommonKeys - is list of all common condition keys.
+var CommonKeys = []Key{
+	AWSReferer,
+	AWSSourceIP,
+	AWSUserAgent,
+	AWSSecureTransport,
+	AWSCurrentTime,
+	AWSEpochTime,
+	AWSPrincipalType,
+	AWSUserID,
+	AWSUsername,
+}
+
+func substFuncFromValues(values map[string][]string) func(string) string {
+	return func(v string) string {
+		for _, key := range CommonKeys {
+			// Empty values are not supported for policy variables.
+			if rvalues, ok := values[key.Name()]; ok && rvalues[0] != "" {
+				v = strings.Replace(v, key.VarName(), rvalues[0], -1)
+			}
+		}
+		return v
+	}
+}
 
 // IsValid - checks if key is valid or not.
 func (key Key) IsValid() bool {
-	switch key {
-	case S3XAmzCopySource, S3XAmzServerSideEncryption, S3XAmzServerSideEncryptionAwsKMSKeyID:
-		fallthrough
-	case S3XAmzMetadataDirective, S3XAmzStorageClass, S3LocationConstraint, S3Prefix:
-		fallthrough
-	case S3Delimiter, S3MaxKeys, AWSReferer, AWSSourceIP:
-		return true
+	for _, supKey := range AllSupportedKeys {
+		if supKey == key {
+			return true
+		}
 	}
 
 	return false
@@ -91,6 +153,11 @@ func (key Key) MarshalJSON() ([]byte, error) {
 	}
 
 	return json.Marshal(string(key))
+}
+
+// VarName - returns variable key name, such as "${aws:username}"
+func (key Key) VarName() string {
+	return fmt.Sprintf("${%s}", key)
 }
 
 // Name - returns key name which is stripped value of prefixes "aws:" and "s3:"

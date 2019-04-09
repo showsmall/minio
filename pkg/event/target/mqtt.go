@@ -22,11 +22,17 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"path/filepath"
 	"time"
 
 	"github.com/eclipse/paho.mqtt.golang"
 	"github.com/minio/minio/pkg/event"
 	xnet "github.com/minio/minio/pkg/net"
+)
+
+const (
+	retryInterval     = 3 // In Seconds
+	reconnectInterval = 5 // In Seconds
 )
 
 // MQTTArgs - MQTT target arguments.
@@ -35,12 +41,13 @@ type MQTTArgs struct {
 	Broker               xnet.URL       `json:"broker"`
 	Topic                string         `json:"topic"`
 	QoS                  byte           `json:"qos"`
-	ClientID             string         `json:"clientId"`
 	User                 string         `json:"username"`
 	Password             string         `json:"password"`
 	MaxReconnectInterval time.Duration  `json:"reconnectInterval"`
 	KeepAlive            time.Duration  `json:"keepAliveInterval"`
 	RootCAs              *x509.CertPool `json:"-"`
+	QueueDir             string         `json:"queueDir"`
+	QueueLimit           uint16         `json:"queueLimit"`
 }
 
 // Validate MQTTArgs fields
@@ -57,6 +64,15 @@ func (m MQTTArgs) Validate() error {
 	default:
 		return errors.New("unknown protocol in broker address")
 	}
+	if m.QueueDir != "" {
+		if !filepath.IsAbs(m.QueueDir) {
+			return errors.New("queueDir path should be absolute")
+		}
+		if m.QoS == 0 {
+			return errors.New("qos should be set to 1 or 2 if queueDir is set")
+		}
+	}
+
 	return nil
 }
 
@@ -65,6 +81,8 @@ type MQTTTarget struct {
 	id     event.TargetID
 	args   MQTTArgs
 	client mqtt.Client
+	store  Store
+	reconn bool
 }
 
 // ID - returns target ID.
@@ -72,16 +90,33 @@ func (target *MQTTTarget) ID() event.TargetID {
 	return target.id
 }
 
-// Send - sends event to MQTT.
-func (target *MQTTTarget) Send(eventData event.Event) error {
-	if !target.client.IsConnected() {
-		token := target.client.Connect()
-		if token.Wait() {
-			if err := token.Error(); err != nil {
-				return err
+// Reads persisted events from the store and re-plays.
+func (target *MQTTTarget) retry() {
+	target.reconn = true
+	events := target.store.ListAll()
+	for len(events) != 0 {
+		for _, key := range events {
+			event, eErr := target.store.Get(key)
+			if eErr != nil {
+				continue
 			}
+			for !target.client.IsConnectionOpen() {
+				time.Sleep(retryInterval * time.Second)
+			}
+			// The connection is open.
+			if err := target.send(event); err != nil {
+				continue
+			}
+			// Delete after a successful publish.
+			target.store.Del(key)
 		}
+		events = target.store.ListAll()
 	}
+	// Release the reconn state.
+	target.reconn = false
+}
+
+func (target *MQTTTarget) send(eventData event.Event) error {
 
 	objectName, err := url.QueryUnescape(eventData.S3.Object.Key)
 	if err != nil {
@@ -89,18 +124,33 @@ func (target *MQTTTarget) Send(eventData event.Event) error {
 	}
 	key := eventData.S3.Bucket.Name + "/" + objectName
 
-	data, err := json.Marshal(event.Log{eventData.EventName, key, []event.Event{eventData}})
+	data, err := json.Marshal(event.Log{EventName: eventData.EventName, Key: key, Records: []event.Event{eventData}})
 	if err != nil {
 		return err
 	}
 
 	token := target.client.Publish(target.args.Topic, target.args.QoS, false, string(data))
+	token.Wait()
+	return token.Error()
 
-	if token.Wait() {
-		return token.Error()
+}
+
+// Send - sends event to MQTT when the connection is active.
+func (target *MQTTTarget) Send(eventData event.Event) error {
+	// Persist the events if the connection is not active.
+	if !target.client.IsConnectionOpen() {
+		if err := target.store.Put(eventData); err != nil {
+			return err
+		}
+		// Ignore if retry is triggered already.
+		if !target.reconn {
+			go target.retry()
+		}
+		return nil
 	}
 
-	return nil
+	// Publishes to the broker as the connection is active.
+	return target.send(eventData)
 }
 
 // Close - does nothing and available for interface compatibility.
@@ -111,7 +161,7 @@ func (target *MQTTTarget) Close() error {
 // NewMQTTTarget - creates new MQTT target.
 func NewMQTTTarget(id string, args MQTTArgs) (*MQTTTarget, error) {
 	options := mqtt.NewClientOptions().
-		SetClientID(args.ClientID).
+		SetClientID("").
 		SetCleanSession(true).
 		SetUsername(args.User).
 		SetPassword(args.Password).
@@ -120,15 +170,49 @@ func NewMQTTTarget(id string, args MQTTArgs) (*MQTTTarget, error) {
 		SetTLSConfig(&tls.Config{RootCAs: args.RootCAs}).
 		AddBroker(args.Broker.String())
 
-	client := mqtt.NewClient(options)
-	token := client.Connect()
-	if token.Wait() && token.Error() != nil {
-		return nil, token.Error()
+	var store Store
+
+	if args.QueueDir != "" {
+		store = NewQueueStore(args.QueueDir, args.QueueLimit)
+		if oErr := store.Open(); oErr != nil {
+			return nil, oErr
+		}
+	} else {
+		store = NewMemoryStore(args.QueueLimit)
 	}
 
-	return &MQTTTarget{
-		id:     event.TargetID{id, "mqtt"},
+	client := mqtt.NewClient(options)
+
+	// The client should establish a first time connection.
+	// Connect() should be successful atleast once to publish events.
+	token := client.Connect()
+
+	go func() {
+		// Repeat the pings until the client registers the clientId and receives a token.
+		for {
+			if token.Wait() && token.Error() == nil {
+				// Connected
+				break
+			}
+			// Reconnecting
+			time.Sleep(reconnectInterval * time.Second)
+			token = client.Connect()
+		}
+	}()
+
+	target := &MQTTTarget{
+		id:     event.TargetID{ID: id, Name: "mqtt"},
 		args:   args,
 		client: client,
-	}, nil
+		store:  store,
+		reconn: false,
+	}
+
+	// Replay any previously persisted events in the store.
+	if len(target.store.ListAll()) != 0 {
+		go target.retry()
+
+	}
+
+	return target, nil
 }

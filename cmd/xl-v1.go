@@ -19,7 +19,6 @@ package cmd
 import (
 	"context"
 	"sort"
-	"time"
 
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/bpool"
@@ -30,6 +29,9 @@ const (
 	// XL metadata file carries per object metadata.
 	xlMetaJSONFile = "xl.json"
 )
+
+// OfflineDisk represents an unavailable disk.
+var OfflineDisk StorageAPI // zero value is nil
 
 // xlObjects - Implements XL object layer.
 type xlObjects struct {
@@ -56,63 +58,6 @@ func (xl xlObjects) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// Locking operations
-
-// List namespace locks held in object layer
-func (xl xlObjects) ListLocks(ctx context.Context, bucket, prefix string, duration time.Duration) ([]VolumeLockInfo, error) {
-	xl.nsMutex.lockMapMutex.Lock()
-	defer xl.nsMutex.lockMapMutex.Unlock()
-	// Fetch current time once instead of fetching system time for every lock.
-	timeNow := UTCNow()
-	volumeLocks := []VolumeLockInfo{}
-
-	for param, debugLock := range xl.nsMutex.debugLockMap {
-		if param.volume != bucket {
-			continue
-		}
-		// N B empty prefix matches all param.path.
-		if !hasPrefix(param.path, prefix) {
-			continue
-		}
-
-		volLockInfo := VolumeLockInfo{
-			Bucket:                param.volume,
-			Object:                param.path,
-			LocksOnObject:         debugLock.counters.total,
-			TotalBlockedLocks:     debugLock.counters.blocked,
-			LocksAcquiredOnObject: debugLock.counters.granted,
-		}
-		// Filter locks that are held on bucket, prefix.
-		for opsID, lockInfo := range debugLock.lockInfo {
-			// filter locks that were held for longer than duration.
-			elapsed := timeNow.Sub(lockInfo.since)
-			if elapsed < duration {
-				continue
-			}
-			// Add locks that are held for longer than duration.
-			volLockInfo.LockDetailsOnObject = append(volLockInfo.LockDetailsOnObject,
-				OpsLockState{
-					OperationID: opsID,
-					LockSource:  lockInfo.lockSource,
-					LockType:    lockInfo.lType,
-					Status:      lockInfo.status,
-					Since:       lockInfo.since,
-				})
-			volumeLocks = append(volumeLocks, volLockInfo)
-		}
-	}
-	return volumeLocks, nil
-}
-
-// Clear namespace locks held in object layer
-func (xl xlObjects) ClearLocks(ctx context.Context, volLocks []VolumeLockInfo) error {
-	// Remove lock matching bucket/prefix held longer than duration.
-	for _, volLock := range volLocks {
-		xl.nsMutex.ForceUnlock(volLock.Bucket, volLock.Object)
-	}
-	return nil
-}
-
 // byDiskTotal is a collection satisfying sort.Interface.
 type byDiskTotal []DiskInfo
 
@@ -133,7 +78,9 @@ func getDisksInfo(disks []StorageAPI) (disksInfo []DiskInfo, onlineDisks int, of
 		}
 		info, err := storageDisk.DiskInfo()
 		if err != nil {
-			logger.LogIf(context.Background(), err)
+			ctx := context.Background()
+			logger.GetReqInfo(ctx).AppendTags("disk", storageDisk.String())
+			logger.LogIf(ctx, err)
 			if IsErr(err, baseErrs...) {
 				offlineDisks++
 				continue
@@ -173,29 +120,24 @@ func getStorageInfo(disks []StorageAPI) StorageInfo {
 		return StorageInfo{}
 	}
 
+	// Combine all disks to get total usage
+	var used, total, available uint64
+	for _, di := range validDisksInfo {
+		used = used + di.Used
+		total = total + di.Total
+		available = available + di.Free
+	}
+
 	_, sscParity := getRedundancyCount(standardStorageClass, len(disks))
 	_, rrscparity := getRedundancyCount(reducedRedundancyStorageClass, len(disks))
 
-	// Total number of online data drives available
-	// This is the number of drives we report free and total space for
-	availableDataDisks := uint64(onlineDisks - sscParity)
-
-	// Available data disks can be zero when onlineDisks is equal to parity,
-	// at that point we simply choose online disks to calculate the size.
-	if availableDataDisks == 0 {
-		availableDataDisks = uint64(onlineDisks)
+	storageInfo := StorageInfo{
+		Used:      used,
+		Total:     total,
+		Available: available,
 	}
 
-	storageInfo := StorageInfo{}
-
-	// Combine all disks to get total usage.
-	var used uint64
-	for _, di := range validDisksInfo {
-		used = used + di.Used
-	}
-	storageInfo.Used = used
-
-	storageInfo.Backend.Type = Erasure
+	storageInfo.Backend.Type = BackendErasure
 	storageInfo.Backend.OnlineDisks = onlineDisks
 	storageInfo.Backend.OfflineDisks = offlineDisks
 

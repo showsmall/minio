@@ -23,12 +23,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -101,6 +104,12 @@ const (
 	httpsScheme = "https"
 )
 
+// nopCharsetConverter is a dummy charset convert which just copies input to output,
+// it is used to ignore custom encoding charset in S3 XML body.
+func nopCharsetConverter(label string, input io.Reader) (io.Reader, error) {
+	return input, nil
+}
+
 // xmlDecoder provide decoded value in xml.
 func xmlDecoder(body io.Reader, v interface{}, size int64) error {
 	var lbody io.Reader
@@ -110,6 +119,8 @@ func xmlDecoder(body io.Reader, v interface{}, size int64) error {
 		lbody = body
 	}
 	d := xml.NewDecoder(lbody)
+	// Ignore any encoding set in the XML body
+	d.CharsetReader = nopCharsetConverter
 	return d.Decode(v)
 }
 
@@ -180,27 +191,98 @@ func contains(slice interface{}, elem interface{}) bool {
 	return false
 }
 
-// Starts a profiler returns nil if profiler is not enabled, caller needs to handle this.
-func startProfiler(profiler string) interface {
-	Stop()
-} {
-	// Enable profiler if ``_MINIO_PROFILER`` is set. Supported options are [cpu, mem, block].
-	switch profiler {
-	case "cpu":
-		return profile.Start(profile.CPUProfile, profile.NoShutdownHook)
-	case "mem":
-		return profile.Start(profile.MemProfile, profile.NoShutdownHook)
-	case "block":
-		return profile.Start(profile.BlockProfile, profile.NoShutdownHook)
-	default:
-		return nil
+// profilerWrapper is created becauses pkg/profiler doesn't
+// provide any API to calculate the profiler file path in the
+// disk since the name of this latter is randomly generated.
+type profilerWrapper struct {
+	stopFn func()
+	pathFn func() string
+}
+
+func (p profilerWrapper) Stop() {
+	p.stopFn()
+}
+
+func (p profilerWrapper) Path() string {
+	return p.pathFn()
+}
+
+// Returns current profile data, returns error if there is no active
+// profiling in progress. Stops an active profile.
+func getProfileData() ([]byte, error) {
+	if globalProfiler == nil {
+		return nil, errors.New("profiler not enabled")
 	}
+
+	profilerPath := globalProfiler.Path()
+
+	// Stop the profiler
+	globalProfiler.Stop()
+
+	profilerFile, err := os.Open(profilerPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return ioutil.ReadAll(profilerFile)
+}
+
+// Starts a profiler returns nil if profiler is not enabled, caller needs to handle this.
+func startProfiler(profilerType, dirPath string) (minioProfiler, error) {
+	var err error
+	if dirPath == "" {
+		dirPath, err = ioutil.TempDir("", "profile")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var profiler interface {
+		Stop()
+	}
+
+	var profilerFileName string
+
+	// Enable profiler and set the name of the file that pkg/pprof
+	// library creates to store profiling data.
+	switch profilerType {
+	case "cpu":
+		profiler = profile.Start(profile.CPUProfile, profile.NoShutdownHook, profile.ProfilePath(dirPath))
+		profilerFileName = "cpu.pprof"
+	case "mem":
+		profiler = profile.Start(profile.MemProfile, profile.NoShutdownHook, profile.ProfilePath(dirPath))
+		profilerFileName = "mem.pprof"
+	case "block":
+		profiler = profile.Start(profile.BlockProfile, profile.NoShutdownHook, profile.ProfilePath(dirPath))
+		profilerFileName = "block.pprof"
+	case "mutex":
+		profiler = profile.Start(profile.MutexProfile, profile.NoShutdownHook, profile.ProfilePath(dirPath))
+		profilerFileName = "mutex.pprof"
+	case "trace":
+		profiler = profile.Start(profile.TraceProfile, profile.NoShutdownHook, profile.ProfilePath(dirPath))
+		profilerFileName = "trace.out"
+	default:
+		return nil, errors.New("profiler type unknown")
+	}
+
+	return &profilerWrapper{
+		stopFn: profiler.Stop,
+		pathFn: func() string {
+			return filepath.Join(dirPath, profilerFileName)
+		},
+	}, nil
+}
+
+// minioProfiler - minio profiler interface.
+type minioProfiler interface {
+	// Stop the profiler
+	Stop()
+	// Return the path of the profiling file
+	Path() string
 }
 
 // Global profiler to be used by service go-routine.
-var globalProfiler interface {
-	Stop()
-}
+var globalProfiler minioProfiler
 
 // dump the request into a string in JSON format.
 func dumpRequest(r *http.Request) string {
@@ -224,7 +306,7 @@ func dumpRequest(r *http.Request) string {
 	}
 
 	// Formatted string.
-	return strings.TrimSpace(string(buffer.Bytes()))
+	return strings.TrimSpace(buffer.String())
 }
 
 // isFile - returns whether given path is a file or not.
@@ -341,12 +423,13 @@ func newContext(r *http.Request, w http.ResponseWriter, api string) context.Cont
 		object = prefix
 	}
 	reqInfo := &logger.ReqInfo{
-		RequestID:  w.Header().Get(responseRequestIDKey),
-		RemoteHost: handlers.GetSourceIP(r),
-		UserAgent:  r.Header.Get("user-agent"),
-		API:        api,
-		BucketName: bucket,
-		ObjectName: object,
+		DeploymentID: w.Header().Get(responseDeploymentIDKey),
+		RequestID:    w.Header().Get(responseRequestIDKey),
+		RemoteHost:   handlers.GetSourceIP(r),
+		UserAgent:    r.UserAgent(),
+		API:          api,
+		BucketName:   bucket,
+		ObjectName:   object,
 	}
 	return logger.SetReqInfo(context.Background(), reqInfo)
 }
@@ -380,4 +463,14 @@ func isNetworkOrHostDown(err error) bool {
 		}
 	}
 	return false
+}
+
+// Used for registering with rest handlers (have a look at registerStorageRESTHandlers for usage example)
+// If it is passed ["aaaa", "bbbb"], it returns ["aaaa", "{aaaa:.*}", "bbbb", "{bbbb:.*}"]
+func restQueries(keys ...string) []string {
+	var accumulator []string
+	for _, key := range keys {
+		accumulator = append(accumulator, key, "{"+key+":.*}")
+	}
+	return accumulator
 }

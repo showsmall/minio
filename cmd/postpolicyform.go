@@ -29,14 +29,14 @@ import (
 
 // startWithConds - map which indicates if a given condition supports starts-with policy operator
 var startsWithConds = map[string]bool{
-	"$acl":                 true,
-	"$bucket":              false,
-	"$cache-control":       true,
-	"$content-type":        true,
-	"$content-disposition": true,
-	"$content-encoding":    true,
-	"$expires":             true,
-	"$key":                 true,
+	"$acl":                     true,
+	"$bucket":                  false,
+	"$cache-control":           true,
+	"$content-type":            true,
+	"$content-disposition":     true,
+	"$content-encoding":        true,
+	"$expires":                 true,
+	"$key":                     true,
 	"$success_action_redirect": true,
 	"$redirect":                true,
 	"$success_action_status":   false,
@@ -57,8 +57,9 @@ func toString(val interface{}) string {
 	switch v := val.(type) {
 	case string:
 		return v
+	default:
+		return ""
 	}
-	return ""
 }
 
 // toLowerString - safely convert interface to lower string
@@ -78,18 +79,15 @@ func toInteger(val interface{}) (int64, error) {
 	case string:
 		i, err := strconv.Atoi(v)
 		return int64(i), err
+	default:
+		return 0, errors.New("Invalid number format")
 	}
-
-	return 0, errors.New("Invalid number format")
 }
 
 // isString - Safely check if val is of type string without causing panic.
 func isString(val interface{}) bool {
-	switch val.(type) {
-	case string:
-		return true
-	}
-	return false
+	_, ok := val.(string)
+	return ok
 }
 
 // ContentLengthRange - policy content-length-range field.
@@ -219,10 +217,26 @@ func checkPolicyCond(op string, input1, input2 string) bool {
 
 // checkPostPolicy - apply policy conditions and validate input values.
 // (http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-HTTPPOSTConstructPolicy.html)
-func checkPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) APIErrorCode {
+func checkPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) error {
 	// Check if policy document expiry date is still not reached
 	if !postPolicyForm.Expiration.After(UTCNow()) {
-		return ErrPolicyAlreadyExpired
+		return fmt.Errorf("Invalid according to Policy: Policy expired")
+	}
+	// map to store the metadata
+	metaMap := make(map[string]string)
+	for cond, v := range postPolicyForm.Conditions.Policies {
+		if strings.HasPrefix(cond, "$x-amz-meta-") {
+			formCanonicalName := http.CanonicalHeaderKey(strings.TrimPrefix(cond, "$"))
+			metaMap[formCanonicalName] = v.Value
+		}
+	}
+	// Check if any extra metadata field is passed as input
+	for key := range formValues {
+		if strings.HasPrefix(key, "X-Amz-Meta-") {
+			if _, ok := metaMap[key]; !ok {
+				return fmt.Errorf("Invalid according to Policy: Extra input fields: %s", key)
+			}
+		}
 	}
 
 	// Flag to indicate if all policies conditions are satisfied
@@ -239,22 +253,23 @@ func checkPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) APIE
 		if startsWithSupported, condFound := startsWithConds[cond]; condFound {
 			// Check if the current condition supports starts-with operator
 			if op == policyCondStartsWith && !startsWithSupported {
-				return ErrAccessDenied
+				return fmt.Errorf("Invalid according to Policy: Policy Condition failed")
 			}
 			// Check if current policy condition is satisfied
-			condPassed = checkPolicyCond(op, formValues.Get(formCanonicalName), v.Value)
+			if !condPassed {
+				return fmt.Errorf("Invalid according to Policy: Policy Condition failed")
+			}
 		} else {
 			// This covers all conditions X-Amz-Meta-* and X-Amz-*
 			if strings.HasPrefix(cond, "$x-amz-meta-") || strings.HasPrefix(cond, "$x-amz-") {
 				// Check if policy condition is satisfied
 				condPassed = checkPolicyCond(op, formValues.Get(formCanonicalName), v.Value)
+				if !condPassed {
+					return fmt.Errorf("Invalid according to Policy: Policy Condition failed: [%s, %s, %s]", op, cond, v.Value)
+				}
 			}
-		}
-		// Check if current policy condition is satisfied, quit immediately otherwise
-		if !condPassed {
-			return ErrAccessDenied
 		}
 	}
 
-	return ErrNone
+	return nil
 }

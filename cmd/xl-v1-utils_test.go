@@ -174,7 +174,7 @@ func (m *xlMetaV1) AddTestObjectCheckSum(checkSumNum int, name string, algorithm
 
 // AddTestObjectPart - add a new object part in order.
 func (m *xlMetaV1) AddTestObjectPart(partNumber int, partName string, partETag string, partSize int64) {
-	partInfo := objectPartInfo{
+	partInfo := ObjectPartInfo{
 		Number: partNumber,
 		Name:   partName,
 		ETag:   partETag,
@@ -201,7 +201,7 @@ func getSampleXLMeta(totalParts int) xlMetaV1 {
 	// Number of checksum info == total parts.
 	xlMeta.Erasure.Checksums = make([]ChecksumInfo, totalParts)
 	// total number of parts.
-	xlMeta.Parts = make([]objectPartInfo, totalParts)
+	xlMeta.Parts = make([]ObjectPartInfo, totalParts)
 	for i := 0; i < totalParts; i++ {
 		partName := "part." + strconv.Itoa(i+1)
 		// hard coding hash and algo value for the checksum, Since we are benchmarking the parsing of xl.json the magnitude doesn't affect the test,
@@ -214,7 +214,6 @@ func getSampleXLMeta(totalParts int) xlMetaV1 {
 
 // Compare the unmarshaled XLMetaV1 with the one obtained from gjson parsing.
 func compareXLMetaV1(t *testing.T, unMarshalXLMeta, gjsonXLMeta xlMetaV1) {
-
 	// Start comparing the fields of xlMetaV1 obtained from gjson parsing with one parsed using json unmarshaling.
 	if unMarshalXLMeta.Version != gjsonXLMeta.Version {
 		t.Errorf("Expected the Version to be \"%s\", but got \"%s\".", unMarshalXLMeta.Version, gjsonXLMeta.Version)
@@ -268,6 +267,7 @@ func compareXLMetaV1(t *testing.T, unMarshalXLMeta, gjsonXLMeta xlMetaV1) {
 			}
 		}
 	}
+
 	if unMarshalXLMeta.Minio.Release != gjsonXLMeta.Minio.Release {
 		t.Errorf("Expected the Release string to be \"%s\", but got \"%s\".", unMarshalXLMeta.Minio.Release, gjsonXLMeta.Minio.Release)
 	}
@@ -379,7 +379,7 @@ func TestGetPartSizeFromIdx(t *testing.T) {
 		// partIndex is 0, returns error.
 		{10, 1, 0, errPartSizeIndex},
 		// Total size is -1, returns error.
-		{-1, 10, 1, errInvalidArgument},
+		{-2, 10, 1, errInvalidArgument},
 	}
 
 	for i, testCaseFailure := range testCasesFailure {

@@ -38,6 +38,9 @@ func TestFSV1MetadataObjInfo(t *testing.T) {
 	if objInfo.IsDir {
 		t.Fatal("Unexpected object info value for IsDir", objInfo.IsDir)
 	}
+	if !objInfo.Expires.IsZero() {
+		t.Fatal("Unexpected object info value for Expires ", objInfo.Expires)
+	}
 }
 
 // TestReadFSMetadata - readFSMetadata testing with a healthy and faulty disk
@@ -54,7 +57,7 @@ func TestReadFSMetadata(t *testing.T) {
 	if err := obj.MakeBucketWithLocation(context.Background(), bucketName, ""); err != nil {
 		t.Fatal("Unexpected err: ", err)
 	}
-	if _, err := obj.PutObject(context.Background(), bucketName, objectName, mustGetHashReader(t, bytes.NewReader([]byte("abcd")), int64(len("abcd")), "", ""), nil); err != nil {
+	if _, err := obj.PutObject(context.Background(), bucketName, objectName, mustGetPutObjReader(t, bytes.NewReader([]byte("abcd")), int64(len("abcd")), "", ""), ObjectOptions{}); err != nil {
 		t.Fatal("Unexpected err: ", err)
 	}
 
@@ -89,7 +92,7 @@ func TestWriteFSMetadata(t *testing.T) {
 	if err := obj.MakeBucketWithLocation(context.Background(), bucketName, ""); err != nil {
 		t.Fatal("Unexpected err: ", err)
 	}
-	if _, err := obj.PutObject(context.Background(), bucketName, objectName, mustGetHashReader(t, bytes.NewReader([]byte("abcd")), int64(len("abcd")), "", ""), nil); err != nil {
+	if _, err := obj.PutObject(context.Background(), bucketName, objectName, mustGetPutObjReader(t, bytes.NewReader([]byte("abcd")), int64(len("abcd")), "", ""), ObjectOptions{}); err != nil {
 		t.Fatal("Unexpected err: ", err)
 	}
 

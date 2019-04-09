@@ -18,11 +18,11 @@ package cmd
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/madmin"
 )
 
 // commonTime returns a maximally occurring time from a list of time.
@@ -158,47 +158,49 @@ func getLatestXLMeta(ctx context.Context, partsMetadata []xlMetaV1, errs []error
 //
 // - slice of errors about the state of data files on disk - can have
 //   a not-found error or a hash-mismatch error.
-//
-// - non-nil error if any of the disks failed unexpectedly (i.e. error
-//   other than file not found and not a checksum error).
 func disksWithAllParts(ctx context.Context, onlineDisks []StorageAPI, partsMetadata []xlMetaV1, errs []error, bucket,
-	object string) ([]StorageAPI, []error, error) {
-
+	object string, scanMode madmin.HealScanMode) ([]StorageAPI, []error) {
 	availableDisks := make([]StorageAPI, len(onlineDisks))
-	buffer := []byte{}
 	dataErrs := make([]error, len(onlineDisks))
 
 	for i, onlineDisk := range onlineDisks {
 		if onlineDisk == nil {
+			dataErrs[i] = errs[i]
 			continue
 		}
 
-		// disk has a valid xl.json but may not have all the
-		// parts. This is considered an outdated disk, since
-		// it needs healing too.
-		for _, part := range partsMetadata[i].Parts {
-			partPath := filepath.Join(object, part.Name)
-			checksumInfo := partsMetadata[i].Erasure.GetChecksumInfo(part.Name)
-			verifier := NewBitrotVerifier(checksumInfo.Algorithm, checksumInfo.Hash)
-
-			// verification happens even if a 0-length
-			// buffer is passed
-			_, hErr := onlineDisk.ReadFile(bucket, partPath, 0, buffer, verifier)
-
-			isCorrupt := false
-			if hErr != nil {
-				isCorrupt = strings.HasPrefix(hErr.Error(), "Bitrot verification mismatch - expected ")
+		switch scanMode {
+		case madmin.HealDeepScan:
+			erasureInfo := partsMetadata[i].Erasure
+			erasure, err := NewErasure(ctx, erasureInfo.DataBlocks, erasureInfo.ParityBlocks, erasureInfo.BlockSize)
+			if err != nil {
+				dataErrs[i] = err
+				continue
 			}
-			switch {
-			case isCorrupt:
-				fallthrough
-			case hErr == errFileNotFound, hErr == errVolumeNotFound:
-				dataErrs[i] = hErr
-				break
-			case hErr != nil:
-				logger.LogIf(ctx, hErr)
-				// abort on unhandled errors
-				return nil, nil, hErr
+
+			// disk has a valid xl.json but may not have all the
+			// parts. This is considered an outdated disk, since
+			// it needs healing too.
+			for _, part := range partsMetadata[i].Parts {
+				checksumInfo := erasureInfo.GetChecksumInfo(part.Name)
+				tillOffset := erasure.ShardFileTillOffset(0, part.Size, part.Size)
+				err = bitrotCheckFile(onlineDisk, bucket, pathJoin(object, part.Name), tillOffset, checksumInfo.Algorithm, checksumInfo.Hash, erasure.ShardSize())
+				if err != nil {
+					isCorrupt := strings.HasPrefix(err.Error(), "Bitrot verification mismatch - expected ")
+					if !isCorrupt && err != errFileNotFound && err != errVolumeNotFound {
+						logger.LogIf(ctx, err)
+					}
+					dataErrs[i] = err
+					break
+				}
+			}
+		case madmin.HealNormalScan:
+			for _, part := range partsMetadata[i].Parts {
+				_, err := onlineDisk.StatFile(bucket, pathJoin(object, part.Name))
+				if err != nil {
+					dataErrs[i] = err
+					break
+				}
 			}
 		}
 
@@ -208,5 +210,5 @@ func disksWithAllParts(ctx context.Context, onlineDisks []StorageAPI, partsMetad
 		}
 	}
 
-	return availableDisks, dataErrs, nil
+	return availableDisks, dataErrs
 }

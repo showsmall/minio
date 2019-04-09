@@ -31,6 +31,12 @@ import (
 // DefaultSkewTime - skew time is 15 minutes between minio peers.
 const DefaultSkewTime = 15 * time.Minute
 
+// defaultRPCTimeout - default RPC timeout is one minute.
+const defaultRPCTimeout = 5 * time.Minute
+
+// defaultRPCRetryTime - default RPC time to wait before retry after a network error
+const defaultRPCRetryTime = 1 * time.Minute
+
 var errRPCRetry = fmt.Errorf("rpc: retry error")
 
 func isNetError(err error) bool {
@@ -165,6 +171,15 @@ type RPCClient struct {
 }
 
 func (client *RPCClient) setRetryTicker(ticker *time.Ticker) {
+	if ticker == nil {
+		client.RLock()
+		isNil := client.retryTicker == nil
+		client.RUnlock()
+		if isNil {
+			return
+		}
+	}
+
 	client.Lock()
 	defer client.Unlock()
 
@@ -181,18 +196,22 @@ func (client *RPCClient) Call(serviceMethod string, args interface {
 }, reply interface{}) (err error) {
 	lockedCall := func() error {
 		client.RLock()
-		defer client.RUnlock()
-
-		if client.retryTicker != nil {
+		retryTicker := client.retryTicker
+		client.RUnlock()
+		if retryTicker != nil {
 			select {
-			case <-client.retryTicker.C:
+			case <-retryTicker.C:
 			default:
 				return errRPCRetry
 			}
 		}
 
+		client.RLock()
+		authToken := client.authToken
+		client.RUnlock()
+
 		// Make RPC call.
-		args.SetAuthArgs(AuthArgs{client.authToken, client.args.RPCVersion, time.Now().UTC()})
+		args.SetAuthArgs(AuthArgs{authToken, client.args.RPCVersion, time.Now().UTC()})
 		return client.rpcClient.Call(serviceMethod, args, reply)
 	}
 
@@ -204,7 +223,7 @@ func (client *RPCClient) Call(serviceMethod string, args interface {
 		}
 
 		if isNetError(err) {
-			client.setRetryTicker(time.NewTicker(xrpc.DefaultRPCTimeout))
+			client.setRetryTicker(time.NewTicker(defaultRPCRetryTime))
 		} else {
 			client.setRetryTicker(nil)
 		}
@@ -249,9 +268,14 @@ func NewRPCClient(args RPCClientArgs) (*RPCClient, error) {
 		return nil, err
 	}
 
+	rpcClient, err := xrpc.NewClient(args.ServiceURL, args.TLSConfig, defaultRPCTimeout)
+	if err != nil {
+		return nil, err
+	}
+
 	return &RPCClient{
 		args:      args,
 		authToken: args.NewAuthTokenFunc(),
-		rpcClient: xrpc.NewClient(args.ServiceURL, args.TLSConfig, xrpc.DefaultRPCTimeout),
+		rpcClient: rpcClient,
 	}, nil
 }

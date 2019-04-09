@@ -22,9 +22,10 @@ import (
 	"encoding/json"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"os"
 	pathutil "path"
-	"strings"
+	"time"
 
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/lock"
@@ -114,7 +115,7 @@ type fsMetaV1 struct {
 	// Metadata map for current object.
 	Meta map[string]string `json:"meta,omitempty"`
 	// parts info for current object - used in encryption.
-	Parts []objectPartInfo `json:"parts,omitempty"`
+	Parts []ObjectPartInfo `json:"parts,omitempty"`
 }
 
 // IsValid - tells if the format is sane by validating the version
@@ -137,11 +138,7 @@ func (m fsMetaV1) ToObjectInfo(bucket, object string, fi os.FileInfo) ObjectInfo
 
 	// Guess content-type from the extension if possible.
 	if m.Meta["content-type"] == "" {
-		if objectExt := pathutil.Ext(object); objectExt != "" {
-			if content, ok := mimedb.DB[strings.ToLower(strings.TrimPrefix(objectExt, "."))]; ok {
-				m.Meta["content-type"] = content.ContentType
-			}
-		}
+		m.Meta["content-type"] = mimedb.TypeByExtension(pathutil.Ext(object))
 	}
 
 	if hasSuffix(object, slashSeparator) {
@@ -174,7 +171,15 @@ func (m fsMetaV1) ToObjectInfo(bucket, object string, fi os.FileInfo) ObjectInfo
 	} else {
 		objInfo.StorageClass = globalMinioDefaultStorageClass
 	}
-
+	var (
+		t time.Time
+		e error
+	)
+	if exp, ok := m.Meta["expires"]; ok {
+		if t, e = time.Parse(http.TimeFormat, exp); e == nil {
+			objInfo.Expires = t.UTC()
+		}
+	}
 	// etag/md5Sum has already been extracted. We need to
 	// remove to avoid it from appearing as part of
 	// response headers. e.g, X-Minio-* or X-Amz-*.
@@ -212,9 +217,9 @@ func parseFSMetaMap(fsMetaBuf []byte) map[string]string {
 	return metaMap
 }
 
-func parseFSPartsArray(fsMetaBuf []byte) []objectPartInfo {
+func parseFSPartsArray(fsMetaBuf []byte) []ObjectPartInfo {
 	// Get xlMetaV1.Parts array
-	var partsArray []objectPartInfo
+	var partsArray []ObjectPartInfo
 
 	partsArrayResult := gjson.GetBytes(fsMetaBuf, "parts")
 	partsArrayResult.ForEach(func(key, part gjson.Result) bool {
@@ -223,11 +228,13 @@ func parseFSPartsArray(fsMetaBuf []byte) []objectPartInfo {
 		name := gjson.Get(partJSON, "name").String()
 		etag := gjson.Get(partJSON, "etag").String()
 		size := gjson.Get(partJSON, "size").Int()
-		partsArray = append(partsArray, objectPartInfo{
-			Number: int(number),
-			Name:   name,
-			ETag:   etag,
-			Size:   size,
+		actualSize := gjson.Get(partJSON, "actualSize").Int()
+		partsArray = append(partsArray, ObjectPartInfo{
+			Number:     int(number),
+			Name:       name,
+			ETag:       etag,
+			Size:       size,
+			ActualSize: int64(actualSize),
 		})
 		return true
 	})

@@ -31,15 +31,19 @@ type BackendType int
 const (
 	Unknown BackendType = iota
 	// Filesystem backend.
-	FS
-	// Multi disk Erasure (single, distributed) backend.
-	Erasure
+	BackendFS
+	// Multi disk BackendErasure (single, distributed) backend.
+	BackendErasure
 	// Add your own backend.
 )
 
 // StorageInfo - represents total capacity of underlying storage.
 type StorageInfo struct {
 	Used uint64 // Used total used per tenant.
+
+	Total uint64 // Total disk space.
+
+	Available uint64 // Total disk space available.
 
 	// Backend type.
 	Backend struct {
@@ -96,6 +100,9 @@ type ObjectInfo struct {
 	// by the Content-Type header field.
 	ContentEncoding string
 
+	// Date and time at which the object is no longer able to be cached
+	Expires time.Time
+
 	// Specify object storage class
 	StorageClass string
 
@@ -103,14 +110,20 @@ type ObjectInfo struct {
 	UserDefined map[string]string
 
 	// List of individual parts, maximum size of upto 10,000
-	Parts []objectPartInfo `json:"-"`
+	Parts []ObjectPartInfo `json:"-"`
 
 	// Implements writer and reader used by CopyObject API
 	Writer       io.WriteCloser `json:"-"`
 	Reader       *hash.Reader   `json:"-"`
+	PutObjReader *PutObjReader  `json:"-"`
+
 	metadataOnly bool
+
 	// Date and time when the object was last accessed.
 	AccTime time.Time
+
+	// backendType indicates which backend filled this structure
+	backendType BackendType
 }
 
 // ListPartsInfo - represents list of all parts.
@@ -258,6 +271,9 @@ type PartInfo struct {
 
 	// Size in bytes of the part.
 	Size int64
+
+	// Decompressed Size.
+	ActualSize int64
 }
 
 // MultipartInfo - represents metadata in progress multipart upload.

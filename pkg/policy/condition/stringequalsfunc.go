@@ -18,9 +18,10 @@ package condition
 
 import (
 	"fmt"
+	"net/http"
 	"sort"
-	"strings"
 
+	"github.com/minio/minio-go/pkg/s3utils"
 	"github.com/minio/minio-go/pkg/set"
 )
 
@@ -44,8 +45,13 @@ type stringEqualsFunc struct {
 // evaluate() - evaluates to check whether value by Key in given values is in
 // condition values.
 func (f stringEqualsFunc) evaluate(values map[string][]string) bool {
-	requestValue := values[f.k.Name()]
-	return !f.values.Intersection(set.CreateStringSet(requestValue...)).IsEmpty()
+	requestValue, ok := values[http.CanonicalHeaderKey(f.k.Name())]
+	if !ok {
+		requestValue = values[f.k.Name()]
+	}
+
+	fvalues := f.values.ApplyFunc(substFuncFromValues(values))
+	return !fvalues.Intersection(set.CreateStringSet(requestValue...)).IsEmpty()
 }
 
 // key() - returns condition key which is used by this condition function.
@@ -122,13 +128,15 @@ func validateStringEqualsValues(n name, key Key, values set.StringSet) error {
 	for _, s := range values.ToSlice() {
 		switch key {
 		case S3XAmzCopySource:
-			tokens := strings.SplitN(s, "/", 2)
-			if len(tokens) < 2 {
+			bucket, object := path2BucketAndObject(s)
+			if object == "" {
 				return fmt.Errorf("invalid value '%v' for '%v' for %v condition", s, S3XAmzCopySource, n)
 			}
-			// FIXME: tokens[0] must be a valid bucket name.
-		case S3XAmzServerSideEncryption:
-			if s != "aws:kms" && s != "AES256" {
+			if err := s3utils.CheckValidBucketName(bucket); err != nil {
+				return err
+			}
+		case S3XAmzServerSideEncryption, S3XAmzServerSideEncryptionCustomerAlgorithm:
+			if s != "AES256" {
 				return fmt.Errorf("invalid value '%v' for '%v' for %v condition", s, S3XAmzServerSideEncryption, n)
 			}
 		case S3XAmzMetadataDirective:

@@ -197,13 +197,51 @@ func TestParseCredentialHeader(t *testing.T) {
 				"aws4_request"),
 			expectedErrCode: ErrNone,
 		},
+		// Test Case - 10.
+		// Test case with right inputs -> AccessKey contains `/`. See minio/#6443
+		// "aws4_request" is the valid request version.
+		{
+			inputCredentialStr: generateCredentialStr(
+				"LOCALKEY/DEV/1",
+				sampleTimeStr,
+				"us-west-1",
+				"s3",
+				"aws4_request"),
+			expectedCredentials: generateCredentials(
+				t,
+				"LOCALKEY/DEV/1",
+				sampleTimeStr,
+				"us-west-1",
+				"s3",
+				"aws4_request"),
+			expectedErrCode: ErrNone,
+		},
+		// Test Case - 11.
+		// Test case with right inputs -> AccessKey contains `=`. See minio/#7376
+		// "aws4_request" is the valid request version.
+		{
+			inputCredentialStr: generateCredentialStr(
+				"LOCALKEY/DEV/1=",
+				sampleTimeStr,
+				"us-west-1",
+				"s3",
+				"aws4_request"),
+			expectedCredentials: generateCredentials(
+				t,
+				"LOCALKEY/DEV/1=",
+				sampleTimeStr,
+				"us-west-1",
+				"s3",
+				"aws4_request"),
+			expectedErrCode: ErrNone,
+		},
 	}
 
 	for i, testCase := range testCases {
-		actualCredential, actualErrCode := parseCredentialHeader(testCase.inputCredentialStr, "us-west-1")
+		actualCredential, actualErrCode := parseCredentialHeader(testCase.inputCredentialStr, "us-west-1", "s3")
 		// validating the credential fields.
 		if testCase.expectedErrCode != actualErrCode {
-			t.Fatalf("Test %d: Expected the APIErrCode to be %s, got %s", i+1, errorCodeResponse[testCase.expectedErrCode].Code, errorCodeResponse[actualErrCode].Code)
+			t.Fatalf("Test %d: Expected the APIErrCode to be %s, got %s", i+1, errorCodes[testCase.expectedErrCode].Code, errorCodes[actualErrCode].Code)
 		}
 		if actualErrCode == ErrNone {
 			validateCredentialfields(t, i+1, testCase.expectedCredentials, actualCredential)
@@ -427,7 +465,7 @@ func TestParseSignV4(t *testing.T) {
 	}
 
 	for i, testCase := range testCases {
-		parsedAuthField, actualErrCode := parseSignV4(testCase.inputV4AuthStr, "")
+		parsedAuthField, actualErrCode := parseSignV4(testCase.inputV4AuthStr, "", "s3")
 
 		if testCase.expectedErrCode != actualErrCode {
 			t.Fatalf("Test %d: Expected the APIErrCode to be %d, got %d", i+1, testCase.expectedErrCode, actualErrCode)
@@ -794,7 +832,7 @@ func TestParsePreSignV4(t *testing.T) {
 			inputQuery.Set(testCase.inputQueryKeyVals[j], testCase.inputQueryKeyVals[j+1])
 		}
 		// call the function under test.
-		parsedPreSign, actualErrCode := parsePreSignV4(inputQuery, "")
+		parsedPreSign, actualErrCode := parsePreSignV4(inputQuery, "", serviceS3)
 		if testCase.expectedErrCode != actualErrCode {
 			t.Fatalf("Test %d: Expected the APIErrCode to be %d, got %d", i+1, testCase.expectedErrCode, actualErrCode)
 		}

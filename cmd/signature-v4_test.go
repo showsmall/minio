@@ -31,7 +31,7 @@ func niceError(code APIErrorCode) string {
 		return "ErrNone"
 	}
 
-	return fmt.Sprintf("%s (%s)", errorCodeResponse[code].Code, errorCodeResponse[code].Description)
+	return fmt.Sprintf("%s (%s)", errorCodes[code].Code, errorCodes[code].Description)
 }
 
 func TestDoesPolicySignatureMatch(t *testing.T) {
@@ -74,7 +74,7 @@ func TestDoesPolicySignatureMatch(t *testing.T) {
 				"X-Amz-Date": []string{now.Format(iso8601Format)},
 				"X-Amz-Signature": []string{
 					getSignature(getSigningKey(globalServerConfig.GetCredential().SecretKey, now,
-						globalMinioDefaultRegion), "policy"),
+						globalMinioDefaultRegion, serviceS3), "policy"),
 				},
 				"Policy": []string{"policy"},
 			},
@@ -92,11 +92,14 @@ func TestDoesPolicySignatureMatch(t *testing.T) {
 }
 
 func TestDoesPresignedSignatureMatch(t *testing.T) {
-	rootPath, err := newTestConfig(globalMinioDefaultRegion)
+	obj, fsDir, err := prepareFS()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(rootPath)
+	defer os.RemoveAll(fsDir)
+	if err = newTestConfig(globalMinioDefaultRegion, obj); err != nil {
+		t.Fatal(err)
+	}
 
 	// sha256 hash of "payload"
 	payloadSHA256 := "239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5"
@@ -290,7 +293,7 @@ func TestDoesPresignedSignatureMatch(t *testing.T) {
 		}
 
 		// Check if it matches!
-		err := doesPresignedSignatureMatch(payloadSHA256, req, testCase.region)
+		err := doesPresignedSignatureMatch(payloadSHA256, req, testCase.region, serviceS3)
 		if err != testCase.expected {
 			t.Errorf("(%d) expected to get %s, instead got %s", i, niceError(testCase.expected), niceError(err))
 		}

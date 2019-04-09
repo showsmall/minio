@@ -61,6 +61,32 @@ func TestGenerateKey(t *testing.T) {
 	}
 }
 
+var generateIVTests = []struct {
+	Random     io.Reader
+	ShouldPass bool
+}{
+	{Random: nil, ShouldPass: true},              // 0
+	{Random: rand.Reader, ShouldPass: true},      // 1
+	{Random: shortRandom(32), ShouldPass: true},  // 2
+	{Random: shortRandom(31), ShouldPass: false}, // 3
+}
+
+func TestGenerateIV(t *testing.T) {
+	defer func(disableLog bool) { logger.Disable = disableLog }(logger.Disable)
+	logger.Disable = true
+
+	for i, test := range generateIVTests {
+		i, test := i, test
+		func() {
+			defer recoverTest(i, test.ShouldPass, t)
+			iv := GenerateIV(test.Random)
+			if iv == [32]byte{} {
+				t.Errorf("Test %d: generated IV is zero IV", i) // check that we generate random and unique IV
+			}
+		}()
+	}
+}
+
 var sealUnsealKeyTests = []struct {
 	SealExtKey, SealIV                 [32]byte
 	SealDomain, SealBucket, SealObject string
@@ -137,6 +163,34 @@ func TestDerivePartKey(t *testing.T) {
 		partKey := key.DerivePartKey(test.PartID)
 		if !bytes.Equal(partKey[:], expectedPartKey[:]) {
 			t.Errorf("Test %d derives wrong part-key: got '%s' want: '%s'", i, hex.EncodeToString(partKey[:]), test.PartKey)
+		}
+	}
+}
+
+var sealUnsealETagTests = []string{
+	"",
+	"90682b8e8cc7609c",
+	"90682b8e8cc7609c4671e1d64c73fc30",
+	"90682b8e8cc7609c4671e1d64c73fc307fb3104f",
+}
+
+func TestSealETag(t *testing.T) {
+	var key ObjectKey
+	for i := range key {
+		key[i] = byte(i)
+	}
+	for i, etag := range sealUnsealETagTests {
+		tag, err := hex.DecodeString(etag)
+		if err != nil {
+			t.Errorf("Test %d: failed to decode etag: %s", i, err)
+		}
+		sealedETag := key.SealETag(tag)
+		unsealedETag, err := key.UnsealETag(sealedETag)
+		if err != nil {
+			t.Errorf("Test %d: failed to decrypt etag: %s", i, err)
+		}
+		if !bytes.Equal(unsealedETag, tag) {
+			t.Errorf("Test %d: unsealed etag does not match: got %s - want %s", i, hex.EncodeToString(unsealedETag), etag)
 		}
 	}
 }

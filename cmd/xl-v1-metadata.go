@@ -18,105 +18,32 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"hash"
+	"net/http"
 	"path"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/minio/highwayhash"
 	"github.com/minio/minio/cmd/logger"
-	sha256 "github.com/minio/sha256-simd"
-	"golang.org/x/crypto/blake2b"
 )
 
 const erasureAlgorithmKlauspost = "klauspost/reedsolomon/vandermonde"
 
-// magic HH-256 key as HH-256 hash of the first 100 decimals of π as utf-8 string with a zero key.
-var magicHighwayHash256Key = []byte("\x4b\xe7\x34\xfa\x8e\x23\x8a\xcd\x26\x3e\x83\xe6\xbb\x96\x85\x52\x04\x0f\x93\x5d\xa3\x9f\x44\x14\x97\xe0\x9d\x13\x22\xde\x36\xa0")
-
-// BitrotAlgorithm specifies a algorithm used for bitrot protection.
-type BitrotAlgorithm uint
-
-const (
-	// SHA256 represents the SHA-256 hash function
-	SHA256 BitrotAlgorithm = 1 + iota
-	// HighwayHash256 represents the HighwayHash-256 hash function
-	HighwayHash256
-	// BLAKE2b512 represents the BLAKE2b-256 hash function
-	BLAKE2b512
-)
-
-// DefaultBitrotAlgorithm is the default algorithm used for bitrot protection.
-var DefaultBitrotAlgorithm = HighwayHash256
-
-var bitrotAlgorithms = map[BitrotAlgorithm]string{
-	SHA256:         "sha256",
-	BLAKE2b512:     "blake2b",
-	HighwayHash256: "highwayhash256",
-}
-
-// New returns a new hash.Hash calculating the given bitrot algorithm.
-// New logs error and exits if the algorithm is not supported or not
-// linked into the binary.
-func (a BitrotAlgorithm) New() hash.Hash {
-	switch a {
-	case SHA256:
-		return sha256.New()
-	case BLAKE2b512:
-		b2, _ := blake2b.New512(nil) // New512 never returns an error if the key is nil
-		return b2
-	case HighwayHash256:
-		hh, _ := highwayhash.New(magicHighwayHash256Key) // New will never return error since key is 256 bit
-		return hh
-	}
-	logger.CriticalIf(context.Background(), errors.New("Unsupported bitrot algorithm"))
-	return nil
-}
-
-// Available reports whether the given algorihm is a supported and linked into the binary.
-func (a BitrotAlgorithm) Available() bool {
-	_, ok := bitrotAlgorithms[a]
-	return ok
-}
-
-// String returns the string identifier for a given bitrot algorithm.
-// If the algorithm is not supported String panics.
-func (a BitrotAlgorithm) String() string {
-	name, ok := bitrotAlgorithms[a]
-	if !ok {
-		logger.CriticalIf(context.Background(), errors.New("Unsupported bitrot algorithm"))
-	}
-	return name
-}
-
-// BitrotAlgorithmFromString returns a bitrot algorithm from the given string representation.
-// It returns 0 if the string representation does not match any supported algorithm.
-// The zero value of a bitrot algorithm is never supported.
-func BitrotAlgorithmFromString(s string) (a BitrotAlgorithm) {
-	for alg, name := range bitrotAlgorithms {
-		if name == s {
-			return alg
-		}
-	}
-	return
-}
-
-// objectPartInfo Info of each part kept in the multipart metadata
+// ObjectPartInfo Info of each part kept in the multipart metadata
 // file after CompleteMultipartUpload() is called.
-type objectPartInfo struct {
-	Number int    `json:"number"`
-	Name   string `json:"name"`
-	ETag   string `json:"etag"`
-	Size   int64  `json:"size"`
+type ObjectPartInfo struct {
+	Number     int    `json:"number"`
+	Name       string `json:"name"`
+	ETag       string `json:"etag"`
+	Size       int64  `json:"size"`
+	ActualSize int64  `json:"actualSize"`
 }
 
 // byObjectPartNumber is a collection satisfying sort.Interface.
-type byObjectPartNumber []objectPartInfo
+type byObjectPartNumber []ObjectPartInfo
 
 func (t byObjectPartNumber) Len() int           { return len(t) }
 func (t byObjectPartNumber) Swap(i, j int)      { t[i], t[j] = t[j], t[i] }
@@ -129,15 +56,15 @@ type ChecksumInfo struct {
 	Hash      []byte
 }
 
+type checksumInfoJSON struct {
+	Name      string `json:"name"`
+	Algorithm string `json:"algorithm"`
+	Hash      string `json:"hash,omitempty"`
+}
+
 // MarshalJSON marshals the ChecksumInfo struct
 func (c ChecksumInfo) MarshalJSON() ([]byte, error) {
-	type checksuminfo struct {
-		Name      string `json:"name"`
-		Algorithm string `json:"algorithm"`
-		Hash      string `json:"hash"`
-	}
-
-	info := checksuminfo{
+	info := checksumInfoJSON{
 		Name:      c.Name,
 		Algorithm: c.Algorithm.String(),
 		Hash:      hex.EncodeToString(c.Hash),
@@ -145,28 +72,25 @@ func (c ChecksumInfo) MarshalJSON() ([]byte, error) {
 	return json.Marshal(info)
 }
 
-// UnmarshalJSON unmarshals the the given data into the ChecksumInfo struct
+// UnmarshalJSON - should never be called, instead xlMetaV1UnmarshalJSON() should be used.
 func (c *ChecksumInfo) UnmarshalJSON(data []byte) error {
-	type checksuminfo struct {
-		Name      string `json:"name"`
-		Algorithm string `json:"algorithm"`
-		Hash      string `json:"hash"`
-	}
-
-	var info checksuminfo
-	err := json.Unmarshal(data, &info)
-	if err != nil {
+	logger.LogIf(context.Background(), errUnexpected)
+	var info checksumInfoJSON
+	if err := json.Unmarshal(data, &info); err != nil {
 		return err
 	}
-	c.Algorithm = BitrotAlgorithmFromString(info.Algorithm)
-	if !c.Algorithm.Available() {
-		return errBitrotHashAlgoInvalid
-	}
-	c.Hash, err = hex.DecodeString(info.Hash)
+	sum, err := hex.DecodeString(info.Hash)
 	if err != nil {
 		return err
 	}
 	c.Name = info.Name
+	c.Algorithm = BitrotAlgorithmFromString(info.Algorithm)
+	c.Hash = sum
+
+	if !c.Algorithm.Available() {
+		logger.LogIf(context.Background(), errBitrotHashAlgoInvalid)
+		return errBitrotHashAlgoInvalid
+	}
 	return nil
 }
 
@@ -230,7 +154,7 @@ type xlMetaV1 struct {
 	// Metadata map for current object `xl.json`.
 	Meta map[string]string `json:"meta,omitempty"`
 	// Captures all the individual object `xl.json`.
-	Parts []objectPartInfo `json:"parts,omitempty"`
+	Parts []ObjectPartInfo `json:"parts,omitempty"`
 }
 
 // XL metadata constants.
@@ -260,6 +184,15 @@ func newXLMetaV1(object string, dataBlocks, parityBlocks int) (xlMeta xlMetaV1) 
 		BlockSize:    blockSizeV1,
 		Distribution: hashOrder(object, dataBlocks+parityBlocks),
 	}
+	return xlMeta
+}
+
+// Return a new xlMetaV1 initialized using the given xlMetaV1. Used in healing to make sure that we do not copy
+// over any part's checksum info which will differ for different disks.
+func newXLMetaFromXLMeta(meta xlMetaV1) xlMetaV1 {
+	xlMeta := meta
+	xlMeta.Erasure.Checksums = nil
+	xlMeta.Parts = nil
 	return xlMeta
 }
 
@@ -294,6 +227,17 @@ func (m xlMetaV1) ToObjectInfo(bucket, object string) ObjectInfo {
 		ContentType:     m.Meta["content-type"],
 		ContentEncoding: m.Meta["content-encoding"],
 	}
+	// Update expires
+	var (
+		t time.Time
+		e error
+	)
+	if exp, ok := m.Meta["expires"]; ok {
+		if t, e = time.Parse(http.TimeFormat, exp); e == nil {
+			objInfo.Expires = t.UTC()
+		}
+	}
+	objInfo.backendType = BackendErasure
 
 	// Extract etag from metadata.
 	objInfo.ETag = extractETag(m.Meta)
@@ -318,7 +262,7 @@ func (m xlMetaV1) ToObjectInfo(bucket, object string) ObjectInfo {
 }
 
 // objectPartIndex - returns the index of matching object part number.
-func objectPartIndex(parts []objectPartInfo, partNumber int) int {
+func objectPartIndex(parts []ObjectPartInfo, partNumber int) int {
 	for i, part := range parts {
 		if partNumber == part.Number {
 			return i
@@ -328,12 +272,13 @@ func objectPartIndex(parts []objectPartInfo, partNumber int) int {
 }
 
 // AddObjectPart - add a new object part in order.
-func (m *xlMetaV1) AddObjectPart(partNumber int, partName string, partETag string, partSize int64) {
-	partInfo := objectPartInfo{
-		Number: partNumber,
-		Name:   partName,
-		ETag:   partETag,
-		Size:   partSize,
+func (m *xlMetaV1) AddObjectPart(partNumber int, partName string, partETag string, partSize int64, actualSize int64) {
+	partInfo := ObjectPartInfo{
+		Number:     partNumber,
+		Name:       partName,
+		ETag:       partETag,
+		Size:       partSize,
+		ActualSize: actualSize,
 	}
 
 	// Update part info if it already exists.
@@ -373,25 +318,59 @@ func (m xlMetaV1) ObjectToPartOffset(ctx context.Context, offset int64) (partInd
 	return 0, 0, InvalidRange{}
 }
 
-// pickValidXLMeta - picks one valid xlMeta content and returns from a
-// slice of xlmeta content.
-func pickValidXLMeta(ctx context.Context, metaArr []xlMetaV1, modTime time.Time) (xmv xlMetaV1, e error) {
-	// Pick latest valid metadata.
-	for _, meta := range metaArr {
+func getXLMetaInQuorum(ctx context.Context, metaArr []xlMetaV1, modTime time.Time, quorum int) (xmv xlMetaV1, e error) {
+	metaHashes := make([]string, len(metaArr))
+	for i, meta := range metaArr {
 		if meta.IsValid() && meta.Stat.ModTime.Equal(modTime) {
-			return meta, nil
+			h := sha256.New()
+			for _, p := range meta.Parts {
+				h.Write([]byte(p.Name))
+			}
+			metaHashes[i] = hex.EncodeToString(h.Sum(nil))
 		}
 	}
-	err := fmt.Errorf("No valid xl.json present")
-	logger.LogIf(ctx, err)
-	return xmv, err
+
+	metaHashCountMap := make(map[string]int)
+	for _, hash := range metaHashes {
+		if hash == "" {
+			continue
+		}
+		metaHashCountMap[hash]++
+	}
+
+	maxHash := ""
+	maxCount := 0
+	for hash, count := range metaHashCountMap {
+		if count > maxCount {
+			maxCount = count
+			maxHash = hash
+		}
+	}
+
+	if maxCount < quorum {
+		return xlMetaV1{}, errXLReadQuorum
+	}
+
+	for i, hash := range metaHashes {
+		if hash == maxHash {
+			return metaArr[i], nil
+		}
+	}
+
+	return xlMetaV1{}, errXLReadQuorum
+}
+
+// pickValidXLMeta - picks one valid xlMeta content and returns from a
+// slice of xlmeta content.
+func pickValidXLMeta(ctx context.Context, metaArr []xlMetaV1, modTime time.Time, quorum int) (xmv xlMetaV1, e error) {
+	return getXLMetaInQuorum(ctx, metaArr, modTime, quorum)
 }
 
 // list of all errors that can be ignored in a metadata operation.
 var objMetadataOpIgnoredErrs = append(baseIgnoredErrs, errDiskAccessDenied, errVolumeNotFound, errFileNotFound, errFileAccessDenied, errCorruptedFormat)
 
 // readXLMetaParts - returns the XL Metadata Parts from xl.json of one of the disks picked at random.
-func (xl xlObjects) readXLMetaParts(ctx context.Context, bucket, object string) (xlMetaParts []objectPartInfo, xlMeta map[string]string, err error) {
+func (xl xlObjects) readXLMetaParts(ctx context.Context, bucket, object string) (xlMetaParts []ObjectPartInfo, xlMeta map[string]string, err error) {
 	var ignoredErrs []error
 	for _, disk := range xl.getLoadBalancedDisks() {
 		if disk == nil {
@@ -463,8 +442,9 @@ func writeXLMetadata(ctx context.Context, disk StorageAPI, bucket, prefix string
 		logger.LogIf(ctx, err)
 		return err
 	}
+
 	// Persist marshaled data.
-	err = disk.AppendFile(bucket, jsonFile, metadataBytes)
+	err = disk.WriteAll(bucket, jsonFile, metadataBytes)
 	logger.LogIf(ctx, err)
 	return err
 }
@@ -506,7 +486,6 @@ func writeUniqueXLMetadata(ctx context.Context, disks []StorageAPI, bucket, pref
 	// Start writing `xl.json` to all disks in parallel.
 	for index, disk := range disks {
 		if disk == nil {
-			logger.LogIf(ctx, errDiskNotFound)
 			mErrs[index] = errDiskNotFound
 			continue
 		}
@@ -545,7 +524,6 @@ func writeSameXLMetadata(ctx context.Context, disks []StorageAPI, bucket, prefix
 	// Start writing `xl.json` to all disks in parallel.
 	for index, disk := range disks {
 		if disk == nil {
-			logger.LogIf(ctx, errDiskNotFound)
 			mErrs[index] = errDiskNotFound
 			continue
 		}

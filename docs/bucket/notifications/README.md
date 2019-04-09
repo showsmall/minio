@@ -17,6 +17,7 @@ Bucket events can be published to the following targets:
 | [`AMQP`](#AMQP) | [`Redis`](#Redis) | [`MySQL`](#MySQL) |
 | [`MQTT`](#MQTT) | [`NATS`](#NATS) | [`Apache Kafka`](#apache-kafka) |
 | [`Elasticsearch`](#Elasticsearch) | [`PostgreSQL`](#PostgreSQL) | [`Webhooks`](#webhooks) |
+| [`NSQ`](#NSQ) | | |
 
 ## Prerequisites
 
@@ -30,7 +31,7 @@ Install RabbitMQ from [here](https://www.rabbitmq.com/).
 
 ### Step 1: Add AMQP endpoint to Minio
 
-The default location of Minio server configuration file is ``~/.minio/config.json``. The AMQP configuration is located in the `amqp` key under the `notify` top-level key. Create a configuration key-value pair here for your AMQP instance. The key is a name for your AMQP endpoint, and the value is a collection of key-value parameters described in the table below.
+The Minio server configuration file is stored on the backend in json format. The AMQP configuration is located in the `amqp` key under the `notify` top-level key. Create a configuration key-value pair here for your AMQP instance. The key is a name for your AMQP endpoint, and the value is a collection of key-value parameters described in the table below.
 
 | Parameter | Type | Description |
 |:---|:---|:---|
@@ -67,9 +68,14 @@ An example configuration for RabbitMQ is shown below:
     }
 }
 ```
-
-After updating the configuration file, restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs:  arn:minio:sqs::1:amqp` at start-up if there were no errors.
-
+To update the configuration, use `mc admin config get` command to get the current configuration file for the minio deployment in json format, and save it locally.
+```sh
+$ mc admin config get myminio/ > /tmp/myconfig
+```
+After updating the AMQP configuration in /tmp/myconfig , use `mc admin config set` command to update the configuration for the deployment.Restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs:  arn:minio:sqs::1:amqp` at start-up if there were no errors.
+```sh
+$ mc admin config set myminio < /tmp/myconfig
+```
 Minio supports all the exchanges available in [RabbitMQ](https://www.rabbitmq.com/). For this setup, we are using ``fanout`` exchange.
 
 Note that, you can add as many AMQP server endpoint configurations as needed by providing an identifier (like "1" in the example above) for the AMQP instance and an object of per-server configuration parameters.
@@ -81,8 +87,8 @@ We will enable bucket event notification to trigger whenever a JPEG image is upl
 
 ```
 mc mb myminio/images
-mc events add  myminio/images arn:minio:sqs::1:amqp --suffix .jpg
-mc events list myminio/images
+mc event add  myminio/images arn:minio:sqs::1:amqp --suffix .jpg
+mc event list myminio/images
 arn:minio:sqs::1:amqp s3:ObjectCreated:*,s3:ObjectRemoved:* Filter: suffix=”.jpg”
 ```
 
@@ -145,7 +151,7 @@ Install an MQTT Broker from [here](https://mosquitto.org/).
 
 ### Step 1: Add MQTT endpoint to Minio
 
-the default location of Minio server configuration file is ``~./minio/config.json``. The MQTT configuration is location in the `mqtt` key under the `notify` top-level key. Create a configuration key-value pair here for your MQTT instance. The key is a name for your MQTT endpoint, and the value is a collection of key-value parameters described in the table below.
+The Minio server configuration file is stored on the backend in json format. The MQTT configuration is located in the `mqtt` key under the `notify` top-level key. Create a configuration key-value pair here for your MQTT instance. The key is a name for your MQTT endpoint, and the value is a collection of key-value parameters described in the table below.
 
 
 | Parameter | Type | Description |
@@ -154,9 +160,10 @@ the default location of Minio server configuration file is ``~./minio/config.jso
 | `broker` | _string_ | (Required) MQTT server endpoint, e.g. `tcp://localhost:1883` |
 | `topic` | _string_ | (Required) Name of the MQTT topic to publish on, e.g. `minio` |
 | `qos` | _int_ | Set the Quality of Service Level |
-| `clientId` | _string_ | Unique ID for the MQTT broker to identify Minio |
 | `username` | _string_ | Username to connect to the MQTT server (if required) |
 | `password` | _string_ | Password to connect to the MQTT server (if required) |
+| `queueDir` | _string_ | Persistent store for events when MQTT broker is offline |
+| `queueLimit` | _int_ | Set the maximum event limit for the persistent store. The default limit is 10000 |
 
 An example configuration for MQTT is shown below:
 
@@ -167,14 +174,23 @@ An example configuration for MQTT is shown below:
         "broker": "tcp://localhost:1883",
         "topic": "minio",
         "qos": 1,
-        "clientId": "minio",
         "username": "",
-        "password": ""
+        "password": "",
+        "queueDir": "",
+        "queueLimit": 0
     }
 }
 ```
+Minio supports persistent event store. The persistent store will backup events when the MQTT broker goes offline and replays it when the broker comes back online. The event store can be configured by setting the directory path in `queueDir` field and the maximum limit of events in the queueDir in `queueLimit` field. For eg, the `queueDir` can be `/home/events` and `queueLimit` can be `1000`. By default, the `queueLimit` is set to 10000.
 
-After updating the configuration file, restart the Minio sever to put the changes into effect. The server will print a line like `SQS ARNs: arn:minio:sqs::1:mqtt` at start-up if there were no errors.
+To update the configuration, use `mc admin config get` command to get the current configuration file for the minio deployment in json format, and save it locally.
+```sh
+$ mc admin config get myminio/ > /tmp/myconfig
+```
+After updating the MQTT configuration in /tmp/myconfig , use `mc admin config set` command to update the configuration for the deployment.Restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs: arn:minio:sqs::1:mqtt` at start-up if there were no errors.
+```sh
+$ mc admin config set myminio < /tmp/myconfig
+```
 
 Minio supports any MQTT server that supports MQTT 3.1 or 3.1.1 and can connect to them over TCP, TLS, or a Websocket connection using ``tcp://``, ``tls://``, or ``ws://`` respectively as the scheme for the broker url. See the [Go Client](http://www.eclipse.org/paho/clients/golang/) documentation for more information.
 
@@ -187,8 +203,8 @@ We will enable bucket event notification to trigger whenever a JPEG image is upl
 
 ```
 mc mb myminio/images
-mc events add  myminio/images arn:minio:sqs::1:mqtt --suffix .jpg
-mc events list myminio/images
+mc event add  myminio/images arn:minio:sqs::1:mqtt --suffix .jpg
+mc event list myminio/images
 arn:minio:sqs::1:amqp s3:ObjectCreated:*,s3:ObjectRemoved:* Filter: suffix=”.jpg”
 ```
 
@@ -205,12 +221,14 @@ import paho.mqtt.client as mqtt
 
 def on_connect(client, userdata, flags, rc):
   print("Connected with result code "+str(rc))
-  client.subscribe("minio")
+  # qos level is set to 1
+  client.subscribe("minio", 1)
 
 def on_message(client, userdata, msg):
     print(msg.payload)
 
-client = mqtt.Client()
+# client_id is a randomly generated unique ID for the mqtt broker to identify the connection.
+client = mqtt.Client(client_id="myclientid",clean_session=False)
 
 client.on_connect = on_connect
 client.on_message = on_message
@@ -257,7 +275,7 @@ Minio requires a 5.x series version of Elasticsearch. This is the latest major r
 
 ### Step 2: Add Elasticsearch endpoint to Minio
 
-The default location of Minio server configuration file is ``~/.minio/config.json``. The Elasticsearch configuration is located in the `elasticsearch` key under the `notify` top-level key. Create a configuration key-value pair here for your Elasticsearch instance. The key is a name for your Elasticsearch endpoint, and the value is a collection of key-value parameters described in the table below.
+The Minio server configuration file is stored on the backend in json format. The Elasticsearch configuration is located in the `elasticsearch` key under the `notify` top-level key. Create a configuration key-value pair here for your Elasticsearch instance. The key is a name for your Elasticsearch endpoint, and the value is a collection of key-value parameters described in the table below.
 
 | Parameter | Type | Description |
 |:---|:---|:---|
@@ -281,7 +299,14 @@ An example of Elasticsearch configuration is as follows:
 
 If Elasticsearch has authentication enabled, the credentials can be supplied to Minio via the `url` parameter formatted as `PROTO://USERNAME:PASSWORD@ELASTICSEARCH_HOST:PORT`.
 
-After updating the configuration file, restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs:  arn:minio:sqs::1:elasticsearch` at start-up if there were no errors.
+To update the configuration, use `mc admin config get` command to get the current configuration file for the minio deployment in json format, and save it locally.
+```sh
+$ mc admin config get myminio/ > /tmp/myconfig
+```
+After updating the Elasticsearch configuration in /tmp/myconfig , use `mc admin config set` command to update the configuration for the deployment.Restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs:  arn:minio:sqs::1:elasticsearch` at start-up if there were no errors.
+```sh
+$ mc admin config set myminio < /tmp/myconfig
+```
 
 Note that, you can add as many Elasticsearch server endpoint configurations as needed by providing an identifier (like "1" in the example above) for the Elasticsearch instance and an object of per-server configuration parameters.
 
@@ -295,8 +320,8 @@ With the `mc` tool, the configuration is very simple to add. Let us say that the
 
 ```
 mc mb myminio/images
-mc events add  myminio/images arn:minio:sqs::1:elasticsearch --suffix .jpg
-mc events list myminio/images
+mc event add  myminio/images arn:minio:sqs::1:elasticsearch --suffix .jpg
+mc event list myminio/images
 arn:minio:sqs::1:elasticsearch s3:ObjectCreated:*,s3:ObjectRemoved:* Filter: suffix=”.jpg”
 ```
 
@@ -389,15 +414,15 @@ Install [Redis](http://redis.io/download) server. For illustrative purposes, we 
 
 This notification target supports two formats: _namespace_ and _access_.
 
-When the _namespace_ format is used, Minio synchronizes objects in the bucket with entries in a hash. For each entry, the key is formatted as "bucketName/objectName" for an object that exists in the bucket, and the value is the JSON-encoded event data about the operation that created/replaced the object in Minio. When objects are updated or deleted, the corresponding entry int he hash is updated or deleted respectively.
+When the _namespace_ format is used, Minio synchronizes objects in the bucket with entries in a hash. For each entry, the key is formatted as "bucketName/objectName" for an object that exists in the bucket, and the value is the JSON-encoded event data about the operation that created/replaced the object in Minio. When objects are updated or deleted, the corresponding entry in the hash is also updated or deleted.
 
-When the _access_ format is used, Minio appends events to a list using [RPUSH](https://redis.io/commands/rpush). Each item in the list is a JSON encoded list with two items, where the first item is a timestamp string, and second item is a JSON object containing evnet data about the operation that happened in the bucket. No entries appended to the list are updated or deleted by Minio in this format.
+When the _access_ format is used, Minio appends events to a list using [RPUSH](https://redis.io/commands/rpush). Each item in the list is a JSON encoded list with two items, where the first item is a timestamp string, and the second item is a JSON object containing event data about the operation that happened in the bucket. No entries appended to the list are updated or deleted by Minio in this format.
 
 The steps below show how to use this notification target in `namespace` and `access` format.
 
 ### Step 1: Add Redis endpoint to Minio
 
-The default location of Minio server configuration file is ``~/.minio/config.json``. The Redis configuration is located in the `redis` key under the `notify` top-level key. Create a configuration key-value pair here for your Redis instance. The key is a name for your Redis endpoint, and the value is a collection of key-value parameters described in the table below.
+The Minio server configuration file is stored on the backend in json format.The Redis configuration is located in the `redis` key under the `notify` top-level key. Create a configuration key-value pair here for your Redis instance. The key is a name for your Redis endpoint, and the value is a collection of key-value parameters described in the table below.
 
 | Parameter | Type | Description |
 |:---|:---|:---|
@@ -413,14 +438,21 @@ An example of Redis configuration is as follows:
 "redis": {
     "1": {
         "enable": true,
+        "format": "namespace",
         "address": "127.0.0.1:6379",
         "password": "yoursecret",
         "key": "bucketevents"
     }
 }
 ```
-
-After updating the configuration file, restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs:  arn:minio:sqs::1:redis` at start-up if there were no errors.
+To update the configuration, use `mc admin config get` command to get the current configuration file for the minio deployment in json format, and save it locally.
+```sh
+$ mc admin config get myminio/ > /tmp/myconfig
+```
+After updating the Redis configuration in /tmp/myconfig , use `mc admin config set` command to update the configuration for the deployment.Restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs:  arn:minio:sqs::1:redis` at start-up if there were no errors.
+```sh
+$ mc admin config set myminio < /tmp/myconfig
+```
 
 Note that, you can add as many Redis server endpoint configurations as needed by providing an identifier (like "1" in the example above) for the Redis instance and an object of per-server configuration parameters.
 
@@ -434,8 +466,8 @@ With the `mc` tool, the configuration is very simple to add. Let us say that the
 
 ```
 mc mb myminio/images
-mc events add  myminio/images arn:minio:sqs::1:redis --suffix .jpg
-mc events list myminio/images
+mc event add  myminio/images arn:minio:sqs::1:redis --suffix .jpg
+mc event list myminio/images
 arn:minio:sqs::1:redis s3:ObjectCreated:*,s3:ObjectRemoved:* Filter: suffix=”.jpg”
 ```
 
@@ -475,7 +507,7 @@ Install NATS from [here](http://nats.io/).
 
 ### Step 1: Add NATS endpoint to Minio
 
-The default location of Minio server configuration file is ``~/.minio/config.json``. Update the NATS configuration block in ``config.json`` as follows:
+The NATS configuration block in ``config.json`` is as follows:
 
 ```
 "nats": {
@@ -498,9 +530,14 @@ The default location of Minio server configuration file is ``~/.minio/config.jso
     }
 },
 ```
-
-Restart Minio server to reflect config changes. ``bucketevents`` is the subject used by NATS in this example.
-
+To update the configuration, use `mc admin config get` command to get the current configuration file for the minio deployment in json format, and save it locally.
+```sh
+$ mc admin config get myminio/ > /tmp/myconfig
+```
+After updating the NATS configuration in /tmp/myconfig , use `mc admin config set` command to update the configuration for the deployment.Restart Minio server to reflect config changes. ``bucketevents`` is the subject used by NATS in this example.
+```sh
+$ mc admin config set myminio < /tmp/myconfig
+```
 Minio server also supports [NATS Streaming mode](http://nats.io/documentation/streaming/nats-streaming-intro/) that offers additional functionality like `Message/event persistence`, `At-least-once-delivery`, and `Publisher rate limiting`. To configure Minio server to send notifications to NATS Streaming server, update the Minio server configuration file as follows:
 
 ```
@@ -513,7 +550,7 @@ Minio server also supports [NATS Streaming mode](http://nats.io/documentation/st
         "password": "yoursecret",
         "token": "",
         "secure": false,
-        "pingInterval": 0
+        "pingInterval": 0,
         "streaming": {
             "enable": true,
             "clusterID": "test-cluster",
@@ -532,8 +569,8 @@ We will enable bucket event notification to trigger whenever a JPEG image is upl
 
 ```
 mc mb myminio/images
-mc events add  myminio/images arn:minio:sqs::1:nats --suffix .jpg
-mc events list myminio/images
+mc event add  myminio/images arn:minio:sqs::1:nats --suffix .jpg
+mc event list myminio/images
 arn:minio:sqs::1:nats s3:ObjectCreated:*,s3:ObjectRemoved:* Filter: suffix=”.jpg”
 ```
 
@@ -658,7 +695,7 @@ Minio requires PostgreSQL version 9.5 or above. Minio uses the [`INSERT ON CONFL
 
 ### Step 2: Add PostgreSQL endpoint to Minio
 
-The default location of Minio server configuration file is ``~/.minio/config.json``. The PostgreSQL configuration is located in the `postgresql` key under the `notify` top-level key. Create a configuration key-value pair here for your PostgreSQL instance. The key is a name for your PostgreSQL endpoint, and the value is a collection of key-value parameters described in the table below.
+The Minio server configuration file is stored on the backend in json format. The PostgreSQL configuration is located in the `postgresql` key under the `notify` top-level key. Create a configuration key-value pair here for your PostgreSQL instance. The key is a name for your PostgreSQL endpoint, and the value is a collection of key-value parameters described in the table below.
 
 | Parameter | Type | Description |
 |:---|:---|:---|
@@ -691,9 +728,14 @@ An example of PostgreSQL configuration is as follows:
 ```
 
 Note that for illustration here, we have disabled SSL. In the interest of security, for production this is not recommended.
-
-After updating the configuration file, restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs:  arn:minio:sqs::1:postgresql` at start-up if there were no errors.
-
+To update the configuration, use `mc admin config get` command to get the current configuration file for the minio deployment in json format, and save it locally.
+```sh
+$ mc admin config get myminio/ > /tmp/myconfig
+```
+After updating the Postgres configuration in /tmp/myconfig , use `mc admin config set` command to update the configuration for the deployment.Restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs:  arn:minio:sqs::1:postgresql` at start-up if there were no errors.
+```sh
+$ mc admin config set myminio < /tmp/myconfig
+```
 Note that, you can add as many PostgreSQL server endpoint configurations as needed by providing an identifier (like "1" in the example above) for the PostgreSQL instance and an object of per-server configuration parameters.
 
 
@@ -709,10 +751,10 @@ With the `mc` tool, the configuration is very simple to add. Let us say that the
 # Create bucket named `images` in myminio
 mc mb myminio/images
 # Add notification configuration on the `images` bucket using the MySQL ARN. The --suffix argument filters events.
-mc events add myminio/images arn:minio:sqs::1:postgresql --suffix .jpg
+mc event add myminio/images arn:minio:sqs::1:postgresql --suffix .jpg
 # Print out the notification configuration on the `images` bucket.
-mc events list myminio/images
-mc events list myminio/images
+mc event list myminio/images
+mc event list myminio/images
 arn:minio:sqs::1:postgresql s3:ObjectCreated:*,s3:ObjectRemoved:* Filter: suffix=”.jpg”
 ```
 
@@ -755,7 +797,7 @@ Minio requires MySQL version 5.7.8 or above. Minio uses the [JSON](https://dev.m
 
 ### Step 2: Add MySQL server endpoint configuration to Minio
 
-The default location of Minio server configuration file is ``~/.minio/config.json``. The MySQL configuration is located in the `mysql` key under the `notify` top-level key. Create a configuration key-value pair here for your MySQL instance. The key is a name for your MySQL endpoint, and the value is a collection of key-value parameters described in the table below.
+The Minio server configuration file is stored on the backend in json format. The MySQL configuration is located in the `mysql` key under the `notify` top-level key. Create a configuration key-value pair here for your MySQL instance. The key is a name for your MySQL endpoint, and the value is a collection of key-value parameters described in the table below.
 
 | Parameter | Type | Description |
 |:---|:---|:---|
@@ -785,9 +827,14 @@ An example of MySQL configuration is as follows:
         }
 }
 ```
-
-After updating the configuration file, restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs:  arn:minio:sqs::1:mysql` at start-up if there were no errors.
-
+To update the configuration, use `mc admin config get` command to get the current configuration file for the minio deployment in json format, and save it locally.
+```sh
+$ mc admin config get myminio/ > /tmp/myconfig
+```
+After updating the MySQL configuration in /tmp/myconfig , use `mc admin config set` command to update the configuration for the deployment.Restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs:  arn:minio:sqs::1:mysql` at start-up if there were no errors.
+```sh
+$ mc admin config set myminio < /tmp/myconfig
+```
 Note that, you can add as many MySQL server endpoint configurations as needed by providing an identifier (like "1" in the example above) for the MySQL instance and an object of per-server configuration parameters.
 
 
@@ -803,9 +850,9 @@ With the `mc` tool, the configuration is very simple to add. Let us say that the
 # Create bucket named `images` in myminio
 mc mb myminio/images
 # Add notification configuration on the `images` bucket using the MySQL ARN. The --suffix argument filters events.
-mc events add myminio/images arn:minio:sqs::1:postgresql --suffix .jpg
+mc event add myminio/images arn:minio:sqs::1:postgresql --suffix .jpg
 # Print out the notification configuration on the `images` bucket.
-mc events list myminio/images
+mc event list myminio/images
 arn:minio:sqs::1:postgresql s3:ObjectCreated:*,s3:ObjectRemoved:* Filter: suffix=”.jpg”
 ```
 
@@ -842,7 +889,7 @@ Minio requires Kafka version 0.10 or 0.9. Internally Minio uses the [Shopify/sar
 
 ### Step 2: Add Kafka endpoint to Minio
 
-The default location of Minio server configuration file is ``~/.minio/config.json``. Update the kafka configuration block in ``config.json`` as follows:
+The Minio server configuration file is stored on the backend in json format. Update the kafka configuration block in ``config.json`` as follows:
 
 ```
 "kafka": {
@@ -853,17 +900,22 @@ The default location of Minio server configuration file is ``~/.minio/config.jso
     }
 }
 ```
-
-Restart Minio server to reflect config changes. ``bucketevents`` is the topic used by kafka in this example.
-
+To update the configuration, use `mc admin config get` command to get the current configuration file for the minio deployment in json format, and save it locally.
+```sh
+$ mc admin config get myminio/ > /tmp/myconfig
+```
+After updating the Kafka configuration in /tmp/myconfig , use `mc admin config set` command to update the configuration for the deployment.Restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs:  arn:minio:sqs::1:kafka` at start-up if there were no errors.``bucketevents`` is the topic used by kafka in this example.
+```sh
+$ mc admin config set myminio < /tmp/myconfig
+```
 ### Step 3: Enable bucket notification using Minio client
 
 We will enable bucket event notification to trigger whenever a JPEG image is uploaded or deleted from ``images`` bucket on ``myminio`` server. Here ARN value is ``arn:minio:sqs::1:kafka``. To understand more about ARN please follow [AWS ARN](http://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html) documentation.
 
 ```
 mc mb myminio/images
-mc events add  myminio/images arn:minio:sqs::1:kafka --suffix .jpg
-mc events list myminio/images
+mc event add  myminio/images arn:minio:sqs::1:kafka --suffix .jpg
+mc event list myminio/images
 arn:minio:sqs::1:kafka s3:ObjectCreated:*,s3:ObjectRemoved:* Filter: suffix=”.jpg”
 ```
 
@@ -895,7 +947,7 @@ kafkacat -b localhost:9092 -t bucketevents
 
 ### Step 1: Add Webhook endpoint to Minio
 
-The default location of Minio server configuration file is ``~/.minio/config.json``. Update the Webhook configuration block in ``config.json`` as follows
+The Minio server configuration file is stored on the backend in json format. Update the Webhook configuration block in ``config.json`` as follows
 
 ```
 "webhook": {
@@ -904,8 +956,14 @@ The default location of Minio server configuration file is ``~/.minio/config.jso
     "endpoint": "http://localhost:3000/"
 }
 ```
-Here the endpoint is the server listening for webhook notifications. Save the file and restart the Minio server for changes to take effect. Note that the endpoint needs to be live and reachable when you restart your Minio server.
-
+To update the configuration, use `mc admin config get` command to get the current configuration file for the minio deployment in json format, and save it locally.
+```sh
+$ mc admin config get myminio/ > /tmp/myconfig
+```
+After updating the webhook configuration in /tmp/myconfig , use `mc admin config set` command to update the configuration for the deployment.Here the endpoint is the server listening for webhook notifications. Save the file and restart the Minio server for changes to take effect. Note that the endpoint needs to be live and reachable when you restart your Minio server.
+```sh
+$ mc admin config set myminio < /tmp/myconfig
+```
 ### Step 2: Enable bucket notification using Minio client
 
 We will enable bucket event notification to trigger whenever a JPEG image is uploaded to ``images`` bucket on ``myminio`` server. Here ARN value is ``arn:minio:sqs::1:webhook``. To learn more about ARN please follow [AWS ARN](http://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html) documentation.
@@ -913,13 +971,13 @@ We will enable bucket event notification to trigger whenever a JPEG image is upl
 ```
 mc mb myminio/images
 mc mb myminio/images-thumbnail
-mc events add myminio/images arn:minio:sqs::1:webhook --events put --suffix .jpg
+mc event add myminio/images arn:minio:sqs::1:webhook --event put --suffix .jpg
 ```
 
 Check if event notification is successfully configured by
 
 ```
-mc events list myminio/images
+mc event list myminio/images
 ```
 
 You should get a response like this
@@ -954,6 +1012,78 @@ Wait a few moments, then check the bucket’s contents with mc ls — you wi
 ```
 mc ls myminio/images-thumbnail
 [2017-02-08 11:39:40 IST]   992B images-thumbnail.jpg
+```
+
+<a name="NSQ"></a>
+## Publish Minio events to NSQ
+
+Install an NSQ Daemon from [here](https://nsq.io/). Or use the following Docker
+command for starting an nsq daemon:
+
+```
+docker run --rm -p 4150-4151:4150-4151 nsqio/nsq /nsqd
+```
+
+### Step 1: Add NSQ endpoint to Minio
+
+The Minio server configuration file is stored on the backend in json format. The NSQ configuration is located in the `nsq` key under the `notify` top-level key. Create a configuration key-value pair here for your NSQ instance. The key is a name for your NSQ endpoint, and the value is a collection of key-value parameters.
+
+An example configuration for NSQ is shown below:
+
+```json
+"nsq": {
+    "1": {
+        "enable": true,
+        "nsqdAddress": "127.0.0.1:4150",
+        "topic": "minio",
+        "tls": {
+            "enable": false,
+            "skipVerify": true
+        }
+    }
+}
+```
+To update the configuration, use `mc admin config get` command to get the current configuration file for the minio deployment in json format, and save it locally.
+```sh
+$ mc admin config get myminio/ > /tmp/myconfig
+```
+After updating the NSQ configuration in /tmp/myconfig , use `mc admin config set` command to update the configuration for the deployment.Restart the Minio server to put the changes into effect. The server will print a line like `SQS ARNs: arn:minio:sqs::1:nsq` at start-up if there were no errors.
+```sh
+$ mc admin config set myminio < /tmp/myconfig
+```
+
+Note that, you can add as many NSQ daemon endpoint configurations as needed by providing an identifier (like "1" in the example above) for the NSQ instance and an object of per-server configuration parameters.
+
+
+### Step 2: Enable bucket notification using Minio client
+
+We will enable bucket event notification to trigger whenever a JPEG image is uploaded or deleted ``images`` bucket on ``myminio`` server. Here ARN value is ``arn:minio:sqs::1:nsq``.
+
+```
+mc mb myminio/images
+mc event add  myminio/images arn:minio:sqs::1:nsq --suffix .jpg
+mc event list myminio/images
+arn:minio:sqs::1:nsq s3:ObjectCreated:*,s3:ObjectRemoved:* Filter: suffix=”.jpg”
+```
+
+### Step 3: Test on NSQ
+
+The simplest test is to download `nsq_tail` from [nsq github](https://github.com/nsqio/nsq/releases)
+
+```
+./nsq_tail -nsqd-tcp-address 127.0.0.1:4150 -topic minio
+```
+
+Open another terminal and upload a JPEG image into ``images`` bucket.
+
+```
+mc cp gopher.jpg myminio/images
+```
+
+You should receive the following event notification via NSQ once the upload completes.
+
+```
+{"EventName":"s3:ObjectCreated:Put","Key":"images/gopher.jpg","Records":[{"eventVersion":"2.0","eventSource":"minio:s3","awsRegion":"","eventTime":"2018-10-31T09:31:11Z","eventName":"s3:ObjectCreated:Put","userIdentity":{"principalId":"21EJ9HYV110O8NVX2VMS"},"requestParameters":{"sourceIPAddress":"10.1.1.1"},"responseElements":{"x-amz-request-id":"1562A792DAA53426","x-minio-origin-endpoint":"http://10.0.3.1:9000"},"s3":{"s3SchemaVersion":"1.0","configurationId":"Config","bucket":{"name":"images","ownerIdentity":{"principalId":"21EJ9HYV110O8NVX2VMS"},"arn":"arn:aws:s3:::images"},"object":{"key":"gopher.jpg","size":162023,"eTag":"5337769ffa594e742408ad3f30713cd7","contentType":"image/jpeg","userMetadata":{"content-type":"image/jpeg"},"versionId":"1","sequencer":"1562A792DAA53426"}},"source":{"host":"","port":"","userAgent":"Minio (linux; amd64) minio-go/v6.0.8 mc/DEVELOPMENT.GOGET"}}]}
 ```
 
 

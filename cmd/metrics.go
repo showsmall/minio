@@ -124,7 +124,7 @@ func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 
 	var totalDisks, offlineDisks int
 	// Setting totalDisks to 1 and offlineDisks to 0 in FS mode
-	if s.Backend.Type == FS {
+	if s.Backend.Type == BackendFS {
 		totalDisks = 1
 		offlineDisks = 0
 	} else {
@@ -140,6 +140,26 @@ func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 			nil, nil),
 		prometheus.GaugeValue,
 		float64(s.Used),
+	)
+
+	// Total disk available space seen by Minio server instance
+	ch <- prometheus.MustNewConstMetric(
+		prometheus.NewDesc(
+			prometheus.BuildFQName("minio", "disk", "storage_available_bytes"),
+			"Total disk available space seen by Minio server instance",
+			nil, nil),
+		prometheus.GaugeValue,
+		float64(s.Available),
+	)
+
+	// Total disk space seen by Minio server instance
+	ch <- prometheus.MustNewConstMetric(
+		prometheus.NewDesc(
+			prometheus.BuildFQName("minio", "disk", "storage_total_bytes"),
+			"Total disk space seen by Minio server instance",
+			nil, nil),
+		prometheus.GaugeValue,
+		float64(s.Total),
 	)
 
 	// Minio Total Disk/Offline Disk

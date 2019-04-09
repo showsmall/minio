@@ -17,16 +17,20 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
 	miniogopolicy "github.com/minio/minio-go/pkg/policy"
 	"github.com/minio/minio-go/pkg/set"
 	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/event"
 	"github.com/minio/minio/pkg/handlers"
 	"github.com/minio/minio/pkg/policy"
 )
@@ -115,7 +119,7 @@ func (sys *PolicySys) refresh(objAPI ObjectLayer) error {
 			logger.Info("Found in-consistent bucket policies, Migrating them for Bucket: (%s)", bucket.Name)
 			config.Version = policy.DefaultVersion
 
-			if err = savePolicyConfig(objAPI, bucket.Name, config); err != nil {
+			if err = savePolicyConfig(context.Background(), objAPI, bucket.Name, config); err != nil {
 				logger.LogIf(context.Background(), err)
 				return err
 			}
@@ -131,24 +135,42 @@ func (sys *PolicySys) Init(objAPI ObjectLayer) error {
 		return errInvalidArgument
 	}
 
-	// Load PolicySys once during boot.
-	if err := sys.refresh(objAPI); err != nil {
-		return err
-	}
-
-	// Refresh PolicySys in background.
-	go func() {
-		ticker := time.NewTicker(globalRefreshBucketPolicyInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-globalServiceDoneCh:
-				return
-			case <-ticker.C:
-				sys.refresh(objAPI)
+	defer func() {
+		// Refresh PolicySys in background.
+		go func() {
+			ticker := time.NewTicker(globalRefreshBucketPolicyInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-GlobalServiceDoneCh:
+					return
+				case <-ticker.C:
+					sys.refresh(objAPI)
+				}
 			}
-		}
+		}()
 	}()
+
+	doneCh := make(chan struct{})
+	defer close(doneCh)
+
+	// Initializing policy needs a retry mechanism for
+	// the following reasons:
+	//  - Read quorum is lost just after the initialization
+	//    of the object layer.
+	for range newRetryTimerSimple(doneCh) {
+		// Load PolicySys once during boot.
+		if err := sys.refresh(objAPI); err != nil {
+			if err == errDiskNotFound ||
+				strings.Contains(err.Error(), InsufficientReadQuorum{}.Error()) ||
+				strings.Contains(err.Error(), InsufficientWriteQuorum{}.Error()) {
+				logger.Info("Waiting for policy subsystem to be initialized..")
+				continue
+			}
+			return err
+		}
+		break
+	}
 	return nil
 }
 
@@ -159,8 +181,25 @@ func NewPolicySys() *PolicySys {
 	}
 }
 
-func getConditionValues(request *http.Request, locationConstraint string) map[string][]string {
-	args := make(map[string][]string)
+func getConditionValues(request *http.Request, locationConstraint string, username string) map[string][]string {
+	currTime := UTCNow()
+	principalType := func() string {
+		if username != "" {
+			return "User"
+		}
+		return "Anonymous"
+	}()
+	args := map[string][]string{
+		"CurrenTime":      {currTime.Format(event.AMZTimeFormat)},
+		"EpochTime":       {fmt.Sprintf("%d", currTime.Unix())},
+		"principaltype":   {principalType},
+		"SecureTransport": {fmt.Sprintf("%t", request.TLS != nil)},
+		"SourceIp":        {handlers.GetSourceIP(request)},
+		"UserAgent":       {request.UserAgent()},
+		"Referer":         {request.Referer()},
+		"userid":          {username},
+		"username":        {username},
+	}
 
 	for key, values := range request.Header {
 		if existingValues, found := args[key]; found {
@@ -178,8 +217,6 @@ func getConditionValues(request *http.Request, locationConstraint string) map[st
 		}
 	}
 
-	args["SourceIp"] = []string{handlers.GetSourceIP(request)}
-
 	if locationConstraint != "" {
 		args["LocationConstraint"] = []string{locationConstraint}
 	}
@@ -192,7 +229,7 @@ func getPolicyConfig(objAPI ObjectLayer, bucketName string) (*policy.Policy, err
 	// Construct path to policy.json for the given bucket.
 	configFile := path.Join(bucketConfigPrefix, bucketName, bucketPolicyConfig)
 
-	reader, err := readConfig(context.Background(), objAPI, configFile)
+	configData, err := readConfig(context.Background(), objAPI, configFile)
 	if err != nil {
 		if err == errConfigNotFound {
 			err = BucketPolicyNotFound{Bucket: bucketName}
@@ -201,10 +238,10 @@ func getPolicyConfig(objAPI ObjectLayer, bucketName string) (*policy.Policy, err
 		return nil, err
 	}
 
-	return policy.ParseConfig(reader, bucketName)
+	return policy.ParseConfig(bytes.NewReader(configData), bucketName)
 }
 
-func savePolicyConfig(objAPI ObjectLayer, bucketName string, bucketPolicy *policy.Policy) error {
+func savePolicyConfig(ctx context.Context, objAPI ObjectLayer, bucketName string, bucketPolicy *policy.Policy) error {
 	data, err := json.Marshal(bucketPolicy)
 	if err != nil {
 		return err
@@ -213,7 +250,7 @@ func savePolicyConfig(objAPI ObjectLayer, bucketName string, bucketPolicy *polic
 	// Construct path to policy.json for the given bucket.
 	configFile := path.Join(bucketConfigPrefix, bucketName, bucketPolicyConfig)
 
-	return saveConfig(objAPI, configFile, data)
+	return saveConfig(ctx, objAPI, configFile, data)
 }
 
 func removePolicyConfig(ctx context.Context, objAPI ObjectLayer, bucketName string) error {

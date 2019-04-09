@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"os"
 	"reflect"
 	"sync"
 
@@ -267,10 +266,11 @@ func formatXLMigrateV2ToV3(export string) error {
 		return err
 	}
 
-	if err = os.RemoveAll(pathJoin(export, minioMetaMultipartBucket)); err != nil {
+	if err = removeAll(pathJoin(export, minioMetaMultipartBucket)); err != nil {
 		return err
 	}
-	if err = os.MkdirAll(pathJoin(export, minioMetaMultipartBucket), 0755); err != nil {
+
+	if err = mkdirAll(pathJoin(export, minioMetaMultipartBucket), 0755); err != nil {
 		return err
 	}
 
@@ -379,6 +379,23 @@ func saveFormatXL(disk StorageAPI, format interface{}) error {
 	return disk.RenameFile(minioMetaBucket, formatConfigFileTmp, minioMetaBucket, formatConfigFile)
 }
 
+var ignoredHiddenDirectories = []string{
+	minioMetaBucket,
+	".snapshot",
+	"lost+found",
+	"$RECYCLE.BIN",
+	"System Volume Information",
+}
+
+func isIgnoreHiddenDirectories(dir string) bool {
+	for _, ignDir := range ignoredHiddenDirectories {
+		if dir == ignDir {
+			return true
+		}
+	}
+	return false
+}
+
 // loadFormatXL - loads format.json from disk.
 func loadFormatXL(disk StorageAPI) (format *formatXLV3, err error) {
 	buf, err := disk.ReadAll(minioMetaBucket, formatConfigFile)
@@ -391,9 +408,7 @@ func loadFormatXL(disk StorageAPI) (format *formatXLV3, err error) {
 			if err != nil {
 				return nil, err
 			}
-			if len(vols) > 1 || (len(vols) == 1 &&
-				vols[0].Name != minioMetaBucket &&
-				vols[0].Name != "lost+found") {
+			if len(vols) > 1 || (len(vols) == 1 && !isIgnoreHiddenDirectories(vols[0].Name)) {
 				// 'format.json' not found, but we
 				// found user data.
 				return nil, errCorruptedFormat
@@ -473,7 +488,7 @@ func formatXLGetDeploymentID(refFormat *formatXLV3, formats []*formatXLV3) (stri
 }
 
 // formatXLFixDeploymentID - Add deployment id if it is not present.
-func formatXLFixDeploymentID(ctx context.Context, storageDisks []StorageAPI, refFormat *formatXLV3) (err error) {
+func formatXLFixDeploymentID(ctx context.Context, endpoints EndpointList, storageDisks []StorageAPI, refFormat *formatXLV3) (err error) {
 	// Acquire lock on format.json
 	mutex := newNSLock(globalIsDistXL)
 	formatLock := mutex.NewNSLock(minioMetaBucket, formatConfigFile)
@@ -487,7 +502,7 @@ func formatXLFixDeploymentID(ctx context.Context, storageDisks []StorageAPI, ref
 	formats, sErrs := loadFormatXLAll(storageDisks)
 	for i, sErr := range sErrs {
 		if _, ok := formatCriticalErrors[sErr]; ok {
-			return fmt.Errorf("Disk %s: %s", globalEndpoints[i], sErr)
+			return fmt.Errorf("Disk %s: %s", endpoints[i], sErr)
 		}
 	}
 
@@ -525,11 +540,11 @@ func formatXLFixDeploymentID(ctx context.Context, storageDisks []StorageAPI, ref
 }
 
 // Update only the valid local disks which have not been updated before.
-func formatXLFixLocalDeploymentID(ctx context.Context, storageDisks []StorageAPI, refFormat *formatXLV3) error {
+func formatXLFixLocalDeploymentID(ctx context.Context, endpoints EndpointList, storageDisks []StorageAPI, refFormat *formatXLV3) error {
 	// If this server was down when the deploymentID was updated
 	// then we make sure that we update the local disks with the deploymentID.
 	for index, storageDisk := range storageDisks {
-		if globalEndpoints[index].IsLocal && storageDisk != nil && storageDisk.IsOnline() {
+		if endpoints[index].IsLocal && storageDisk != nil && storageDisk.IsOnline() {
 			format, err := loadFormatXL(storageDisk)
 			if err != nil {
 				// Disk can be offline etc.
@@ -881,6 +896,7 @@ func newHealFormatSets(refFormat *formatXLV3, setCount, disksPerSet int, formats
 			if errs[i*disksPerSet+j] == errUnformattedDisk || errs[i*disksPerSet+j] == nil {
 				newFormats[i][j] = &formatXLV3{}
 				newFormats[i][j].Version = refFormat.Version
+				newFormats[i][j].ID = refFormat.ID
 				newFormats[i][j].Format = refFormat.Format
 				newFormats[i][j].XL.Version = refFormat.XL.Version
 				newFormats[i][j].XL.DistributionAlgo = refFormat.XL.DistributionAlgo

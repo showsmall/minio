@@ -19,6 +19,7 @@ package cmd
 import (
 	"context"
 	"os"
+	"strings"
 
 	"github.com/minio/minio/cmd/logger"
 )
@@ -51,6 +52,9 @@ func handleSignals() {
 		err = globalHTTPServer.Shutdown()
 		logger.LogIf(context.Background(), err)
 
+		// send signal to various go-routines that they need to quit.
+		close(GlobalServiceDoneCh)
+
 		if objAPI := newObjectLayerFn(); objAPI != nil {
 			oerr = objAPI.Shutdown(context.Background())
 			logger.LogIf(context.Background(), oerr)
@@ -71,7 +75,7 @@ func handleSignals() {
 			exit(err == nil && oerr == nil)
 		case osSignal := <-globalOSSignalCh:
 			stopHTTPTrace()
-			logger.Info("Exiting on signal %v", osSignal)
+			logger.Info("Exiting on signal: %s", strings.ToUpper(osSignal.String()))
 			exit(stopProcess())
 		case signal := <-globalServiceSignalCh:
 			switch signal {

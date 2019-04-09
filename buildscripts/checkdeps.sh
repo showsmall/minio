@@ -21,7 +21,7 @@ _init() {
 
     ## Minimum required versions for build dependencies
     GIT_VERSION="1.0"
-    GO_VERSION="1.10.1"
+    GO_VERSION="1.12"
     OSX_VERSION="10.8"
     KNAME=$(uname -s)
     ARCH=$(uname -m)
@@ -36,7 +36,7 @@ _init() {
 ## In OSX, 'readlink -f' option does not exist, hence
 ## we have our own readlink -f behavior here.
 ## Once OSX has the option, below function is good enough.
-## 
+##
 ## readlink() {
 ##     return /bin/readlink -f "$1"
 ## }
@@ -89,11 +89,11 @@ check_minimum_version() {
 
 assert_is_supported_arch() {
     case "${ARCH}" in
-        x86_64 | amd64 | aarch64 | ppc64le | arm* )
+        x86_64 | amd64 | aarch64 | ppc64le | arm* | s390x )
             return
             ;;
         *)
-            echo "Arch '${ARCH}' is not supported. Supported Arch: [x86_64, amd64, aarch64, ppc64le, arm*]"
+            echo "Arch '${ARCH}' is not supported. Supported Arch: [x86_64, amd64, aarch64, ppc64le, arm*, s390x]"
             exit 1
     esac
 }

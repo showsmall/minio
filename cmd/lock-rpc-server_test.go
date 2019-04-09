@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * Minio Cloud Storage, (C) 2016, 2017, 2018, 2019 Minio, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,10 +32,10 @@ func testLockEquality(lriLeft, lriRight []lockRequesterInfo) bool {
 	}
 
 	for i := 0; i < len(lriLeft); i++ {
-		if lriLeft[i].writer != lriRight[i].writer ||
-			lriLeft[i].node != lriRight[i].node ||
-			lriLeft[i].serviceEndpoint != lriRight[i].serviceEndpoint ||
-			lriLeft[i].uid != lriRight[i].uid {
+		if lriLeft[i].Writer != lriRight[i].Writer ||
+			lriLeft[i].Node != lriRight[i].Node ||
+			lriLeft[i].ServiceEndpoint != lriRight[i].ServiceEndpoint ||
+			lriLeft[i].UID != lriRight[i].UID {
 			return false
 		}
 	}
@@ -44,8 +44,11 @@ func testLockEquality(lriLeft, lriRight []lockRequesterInfo) bool {
 
 // Helper function to create a lock server for testing
 func createLockTestServer(t *testing.T) (string, *lockRPCReceiver, string) {
-	testPath, err := newTestConfig(globalMinioDefaultRegion)
+	obj, fsDir, err := prepareFS()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err = newTestConfig(globalMinioDefaultRegion, obj); err != nil {
 		t.Fatalf("unable initialize config file, %s", err)
 	}
 
@@ -61,7 +64,7 @@ func createLockTestServer(t *testing.T) (string, *lockRPCReceiver, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return testPath, locker, token
+	return fsDir, locker, token
 }
 
 // Test Lock functionality
@@ -91,13 +94,13 @@ func TestLockRpcServerLock(t *testing.T) {
 		if !result {
 			t.Errorf("Expected %#v, got %#v", true, result)
 		} else {
-			gotLri, _ := locker.ll.lockMap["name"]
+			gotLri := locker.ll.lockMap["name"]
 			expectedLri := []lockRequesterInfo{
 				{
-					writer:          true,
-					node:            "node",
-					serviceEndpoint: "rpc-path",
-					uid:             "0123-4567",
+					Writer:          true,
+					Node:            "node",
+					ServiceEndpoint: "rpc-path",
+					UID:             "0123-4567",
 				},
 			}
 			if !testLockEquality(expectedLri, gotLri) {
@@ -171,7 +174,7 @@ func TestLockRpcServerUnlock(t *testing.T) {
 		if !result {
 			t.Errorf("Expected %#v, got %#v", true, result)
 		} else {
-			gotLri, _ := locker.ll.lockMap["name"]
+			gotLri := locker.ll.lockMap["name"]
 			expectedLri := []lockRequesterInfo(nil)
 			if !testLockEquality(expectedLri, gotLri) {
 				t.Errorf("Expected %#v, got %#v", expectedLri, gotLri)
@@ -207,13 +210,13 @@ func TestLockRpcServerRLock(t *testing.T) {
 		if !result {
 			t.Errorf("Expected %#v, got %#v", true, result)
 		} else {
-			gotLri, _ := locker.ll.lockMap["name"]
+			gotLri := locker.ll.lockMap["name"]
 			expectedLri := []lockRequesterInfo{
 				{
-					writer:          false,
-					node:            "node",
-					serviceEndpoint: "rpc-path",
-					uid:             "0123-4567",
+					Writer:          false,
+					Node:            "node",
+					ServiceEndpoint: "rpc-path",
+					UID:             "0123-4567",
 				},
 			}
 			if !testLockEquality(expectedLri, gotLri) {
@@ -309,13 +312,13 @@ func TestLockRpcServerRUnlock(t *testing.T) {
 		if !result {
 			t.Errorf("Expected %#v, got %#v", true, result)
 		} else {
-			gotLri, _ := locker.ll.lockMap["name"]
+			gotLri := locker.ll.lockMap["name"]
 			expectedLri := []lockRequesterInfo{
 				{
-					writer:          false,
-					node:            "node",
-					serviceEndpoint: "rpc-path",
-					uid:             "89ab-cdef",
+					Writer:          false,
+					Node:            "node",
+					ServiceEndpoint: "rpc-path",
+					UID:             "89ab-cdef",
 				},
 			}
 			if !testLockEquality(expectedLri, gotLri) {
@@ -333,7 +336,7 @@ func TestLockRpcServerRUnlock(t *testing.T) {
 		if !result {
 			t.Errorf("Expected %#v, got %#v", true, result)
 		} else {
-			gotLri, _ := locker.ll.lockMap["name"]
+			gotLri := locker.ll.lockMap["name"]
 			expectedLri := []lockRequesterInfo(nil)
 			if !testLockEquality(expectedLri, gotLri) {
 				t.Errorf("Expected %#v, got %#v", expectedLri, gotLri)
@@ -470,11 +473,14 @@ func TestLockServerInit(t *testing.T) {
 		return
 	}
 
-	rootPath, err := newTestConfig(globalMinioDefaultRegion)
+	obj, fsDir, err := prepareFS()
 	if err != nil {
-		t.Fatalf("Init Test config failed")
+		t.Fatal(err)
 	}
-	defer os.RemoveAll(rootPath)
+	defer os.RemoveAll(fsDir)
+	if err = newTestConfig(globalMinioDefaultRegion, obj); err != nil {
+		t.Fatalf("unable initialize config file, %s", err)
+	}
 
 	currentIsDistXL := globalIsDistXL
 	currentLockServer := globalLockServer
@@ -525,9 +531,6 @@ func TestLockServerInit(t *testing.T) {
 		globalIsDistXL = testCase.isDistXL
 		globalLockServer = nil
 		_, _ = newDsyncNodes(testCase.endpoints)
-		if err != nil {
-			t.Fatalf("Got unexpected error initializing lock servers: %v", err)
-		}
 		if globalLockServer == nil && testCase.isDistXL {
 			t.Errorf("Test %d: Expected initialized lock RPC receiver, but got uninitialized", i+1)
 		}

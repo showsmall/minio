@@ -68,24 +68,6 @@ func parsePublicCertFile(certFile string) (x509Certs []*x509.Certificate, err er
 }
 
 func getRootCAs(certsCAsDir string) (*x509.CertPool, error) {
-	// Get all CA file names.
-	var caFiles []string
-	fis, err := readDir(certsCAsDir)
-	if err != nil {
-		return nil, err
-	}
-	for _, fi := range fis {
-		// Skip all directories.
-		if hasSuffix(fi, slashSeparator) {
-			continue
-		}
-		// We are only interested in regular files here.
-		caFiles = append(caFiles, pathJoin(certsCAsDir, fi))
-	}
-	if len(caFiles) == 0 {
-		return nil, nil
-	}
-
 	rootCAs, _ := x509.SystemCertPool()
 	if rootCAs == nil {
 		// In some systems (like Windows) system cert pool is
@@ -94,16 +76,26 @@ func getRootCAs(certsCAsDir string) (*x509.CertPool, error) {
 		rootCAs = x509.NewCertPool()
 	}
 
-	// Load custom root CAs for client requests
-	for _, caFile := range caFiles {
-		caCert, err := ioutil.ReadFile(caFile)
-		if err != nil {
-			return nil, err
+	fis, err := readDir(certsCAsDir)
+	if err != nil {
+		if err == errFileNotFound {
+			err = nil // Return success if CA's directory is missing.
 		}
-
-		rootCAs.AppendCertsFromPEM(caCert)
+		return rootCAs, err
 	}
 
+	// Load all custom CA files.
+	for _, fi := range fis {
+		// Skip all directories.
+		if hasSuffix(fi, slashSeparator) {
+			continue
+		}
+		caCert, err := ioutil.ReadFile(pathJoin(certsCAsDir, fi))
+		if err != nil {
+			return rootCAs, err
+		}
+		rootCAs.AppendCertsFromPEM(caCert)
+	}
 	return rootCAs, nil
 }
 
@@ -150,24 +142,20 @@ func loadX509KeyPair(certFile, keyFile string) (tls.Certificate, error) {
 	return cert, nil
 }
 
-func getSSLConfig() (x509Certs []*x509.Certificate, rootCAs *x509.CertPool, c *certs.Certs, secureConn bool, err error) {
+func getTLSConfig() (x509Certs []*x509.Certificate, c *certs.Certs, secureConn bool, err error) {
 	if !(isFile(getPublicCertFile()) && isFile(getPrivateKeyFile())) {
-		return nil, nil, nil, false, nil
+		return nil, nil, false, nil
 	}
 
 	if x509Certs, err = parsePublicCertFile(getPublicCertFile()); err != nil {
-		return nil, nil, nil, false, err
+		return nil, nil, false, err
 	}
 
 	c, err = certs.New(getPublicCertFile(), getPrivateKeyFile(), loadX509KeyPair)
 	if err != nil {
-		return nil, nil, nil, false, err
-	}
-
-	if rootCAs, err = getRootCAs(getCADir()); err != nil {
-		return nil, nil, nil, false, err
+		return nil, nil, false, err
 	}
 
 	secureConn = true
-	return x509Certs, rootCAs, c, secureConn, nil
+	return x509Certs, c, secureConn, nil
 }

@@ -25,6 +25,8 @@ import (
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
+	"golang.org/x/net/http2"
+
 	"github.com/minio/minio-go/pkg/set"
 	"github.com/minio/minio/pkg/certs"
 )
@@ -36,7 +38,7 @@ const (
 	DefaultShutdownTimeout = 5 * time.Second
 
 	// DefaultTCPKeepAliveTimeout - default TCP keep alive timeout for accepted connection.
-	DefaultTCPKeepAliveTimeout = 10 * time.Second
+	DefaultTCPKeepAliveTimeout = 30 * time.Second
 
 	// DefaultReadTimeout - default timout to read data from accepted connection.
 	DefaultReadTimeout = 5 * time.Minute
@@ -46,17 +48,22 @@ const (
 
 	// DefaultMaxHeaderBytes - default maximum HTTP header size in bytes.
 	DefaultMaxHeaderBytes = 1 * humanize.MiByte
+
+	// DefaultHTTP2MaxConcurrentStreams - default value for HTTP 2.0 maximum concurrent streams allowed.
+	DefaultHTTP2MaxConcurrentStreams = 1024
 )
 
 // Server - extended http.Server supports multiple addresses to serve and enhanced connection handling.
 type Server struct {
 	http.Server
 	Addrs                  []string      // addresses on which the server listens for new connection.
+	ReadTimeout            time.Duration // timeout used for net.Conn.Read() deadlines.
+	WriteTimeout           time.Duration // timeout used for net.Conn.Write() deadlines.
 	ShutdownTimeout        time.Duration // timeout used for graceful server shutdown.
 	TCPKeepAliveTimeout    time.Duration // timeout used for underneath TCP connection.
 	UpdateBytesReadFunc    func(int)     // function to be called to update bytes read in bufConn.
 	UpdateBytesWrittenFunc func(int)     // function to be called to update bytes written in bufConn.
-	listenerMutex          *sync.Mutex   // to guard 'listener' field.
+	listenerMutex          sync.Mutex    // to guard 'listener' field.
 	listener               *httpListener // HTTP listener for all 'Addrs' field.
 	inShutdown             uint32        // indicates whether the server is in shutdown or not
 	requestCount           int32         // counter holds no. of request in progress.
@@ -80,19 +87,16 @@ func (srv *Server) Start() (err error) {
 
 	addrs := set.CreateStringSet(srv.Addrs...).ToSlice() // copy and remove duplicates
 	tcpKeepAliveTimeout := srv.TCPKeepAliveTimeout
-	updateBytesReadFunc := srv.UpdateBytesReadFunc
-	updateBytesWrittenFunc := srv.UpdateBytesWrittenFunc
 
 	// Create new HTTP listener.
 	var listener *httpListener
 	listener, err = newHTTPListener(
 		addrs,
-		tlsConfig,
 		tcpKeepAliveTimeout,
 		readTimeout,
 		writeTimeout,
-		updateBytesReadFunc,
-		updateBytesWrittenFunc,
+		srv.UpdateBytesReadFunc,
+		srv.UpdateBytesWrittenFunc,
 	)
 	if err != nil {
 		return err
@@ -120,6 +124,14 @@ func (srv *Server) Start() (err error) {
 	srv.listenerMutex.Unlock()
 
 	// Start servicing with listener.
+	if tlsConfig != nil {
+		if err = http2.ConfigureServer(&srv.Server, &http2.Server{
+			MaxConcurrentStreams: DefaultHTTP2MaxConcurrentStreams,
+		}); err != nil {
+			return err
+		}
+		return srv.Server.Serve(tls.NewListener(listener, tlsConfig))
+	}
 	return srv.Server.Serve(listener)
 }
 
@@ -191,7 +203,7 @@ func NewServer(addrs []string, handler http.Handler, getCert certs.GetCertificat
 			CipherSuites:             defaultCipherSuites,
 			CurvePreferences:         secureCurves,
 			MinVersion:               tls.VersionTLS12,
-			NextProtos:               []string{"http/1.1", "h2"},
+			NextProtos:               []string{"h2", "http/1.1"},
 		}
 		tlsConfig.GetCertificate = getCert
 	}
@@ -200,7 +212,6 @@ func NewServer(addrs []string, handler http.Handler, getCert certs.GetCertificat
 		Addrs:               addrs,
 		ShutdownTimeout:     DefaultShutdownTimeout,
 		TCPKeepAliveTimeout: DefaultTCPKeepAliveTimeout,
-		listenerMutex:       &sync.Mutex{},
 	}
 	httpServer.Handler = handler
 	httpServer.TLSConfig = tlsConfig

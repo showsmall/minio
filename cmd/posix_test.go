@@ -188,7 +188,7 @@ func TestPosixIsDirEmpty(t *testing.T) {
 
 	// Should give false on non-existent directory.
 	dir1 := slashpath.Join(tmp, "non-existent-directory")
-	if isDirEmpty(dir1) != false {
+	if isDirEmpty(dir1) {
 		t.Error("expected false for non-existent directory, got true")
 	}
 
@@ -199,7 +199,7 @@ func TestPosixIsDirEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if isDirEmpty(dir2) != false {
+	if isDirEmpty(dir2) {
 		t.Error("expected false for a file, got true")
 	}
 
@@ -210,7 +210,7 @@ func TestPosixIsDirEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if isDirEmpty(dir3) != true {
+	if !isDirEmpty(dir3) {
 		t.Error("expected true for empty dir, got false")
 	}
 }
@@ -1069,70 +1069,53 @@ func TestPosixReadFile(t *testing.T) {
 			volume, "path/to/my/object", 0, 5,
 			[]byte("hello"), nil,
 		},
-		// One path segment length is 255 chars long. - 3
-		{
-			volume, "path/to/my/object000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
-			0, 5, []byte("hello"), nil},
-		// Whole path is 1024 characters long, success case. - 4
-		{
-			volume, "level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001/level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002/level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003/object000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
-			0, 5, []byte("hello"),
-			func() error {
-				// On darwin HFS does not support > 1024 characters.
-				if runtime.GOOS == "darwin" {
-					return errFileNameTooLong
-				}
-				// On all other platforms return success.
-				return nil
-			}(),
-		},
-		// Object is a directory. - 5
+		// Object is a directory. - 3
 		{
 			volume, "object-as-dir",
 			0, 5, nil, errIsNotRegular},
-		// One path segment length is > 255 chars long. - 6
+		// One path segment length is > 255 chars long. - 4
 		{
 			volume, "path/to/my/object0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
 			0, 5, nil, errFileNameTooLong},
-		// Path length is > 1024 chars long. - 7
+		// Path length is > 1024 chars long. - 5
 		{
 			volume, "level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001/level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002/level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003/object000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
 			0, 5, nil, errFileNameTooLong},
-		// Buffer size greater than object size. - 8
+		// Buffer size greater than object size. - 6
 		{
 			volume, "myobject", 0, 16,
 			[]byte("hello, world"),
 			io.ErrUnexpectedEOF,
 		},
-		// Reading from an offset success. - 9
+		// Reading from an offset success. - 7
 		{
 			volume, "myobject", 7, 5,
 			[]byte("world"), nil,
 		},
-		// Reading from an object but buffer size greater. - 10
+		// Reading from an object but buffer size greater. - 8
 		{
 			volume, "myobject",
 			7, 8,
 			[]byte("world"),
 			io.ErrUnexpectedEOF,
 		},
-		// Seeking ahead returns io.EOF. - 11
+		// Seeking ahead returns io.EOF. - 9
 		{
 			volume, "myobject", 14, 1, nil, io.EOF,
 		},
-		// Empty volume name. - 12
+		// Empty volume name. - 10
 		{
 			"", "myobject", 14, 1, nil, errVolumeNotFound,
 		},
-		// Empty filename name. - 13
+		// Empty filename name. - 11
 		{
 			volume, "", 14, 1, nil, errIsNotRegular,
 		},
-		// Non existent volume name - 14.
+		// Non existent volume name - 12
 		{
 			"abcd", "", 14, 1, nil, errVolumeNotFound,
 		},
-		// Non existent filename - 15.
+		// Non existent filename - 13
 		{
 			volume, "abcd", 14, 1, nil, errFileNotFound,
 		},
@@ -1140,7 +1123,7 @@ func TestPosixReadFile(t *testing.T) {
 
 	// Create all files needed during testing.
 	appendFiles := testCases[:4]
-
+	v := NewBitrotVerifier(SHA256, getSHA256Sum([]byte("hello, world")))
 	// Create test files for further reading.
 	for i, appendFile := range appendFiles {
 		err = posixStorage.AppendFile(volume, appendFile.fileName, []byte("hello, world"))
@@ -1149,21 +1132,11 @@ func TestPosixReadFile(t *testing.T) {
 		}
 	}
 
-	// Check PathError specially.
 	{
 		buf := make([]byte, 5)
-		if _, err = posixStorage.ReadFile(volume, "myobject", -1, buf, nil); err != nil {
-			isPathError := false
-			switch err.(type) {
-			case *os.PathError:
-				isPathError = true
-			}
-
-			if !isPathError {
-				t.Fatalf("expected: <os.PathError>, got: %v", err)
-			}
-		} else {
-			t.Fatalf("expected: <os.PathError>, got: <nil>")
+		// Test for negative offset.
+		if _, err = posixStorage.ReadFile(volume, "myobject", -1, buf, v); err == nil {
+			t.Fatalf("expected: error, got: <nil>")
 		}
 	}
 
@@ -1172,7 +1145,7 @@ func TestPosixReadFile(t *testing.T) {
 		var n int64
 		// Common read buffer.
 		var buf = make([]byte, testCase.bufSize)
-		n, err = posixStorage.ReadFile(testCase.volume, testCase.fileName, testCase.offset, buf, nil)
+		n, err = posixStorage.ReadFile(testCase.volume, testCase.fileName, testCase.offset, buf, v)
 		if err != nil && testCase.expectedErr != nil {
 			// Validate if the type string of the errors are an exact match.
 			if err.Error() != testCase.expectedErr.Error() {
@@ -1201,7 +1174,7 @@ func TestPosixReadFile(t *testing.T) {
 			// results. In this scenario return 'n' is always lesser than the input buffer.
 			if err == io.ErrUnexpectedEOF {
 				if !bytes.Equal(testCase.expectedBuf, buf[:n]) {
-					t.Errorf("Case: %d %#v, expected: \"%s\", got: \"%s\"", i+1, testCase, string(testCase.expectedBuf), string(buf[:testCase.bufSize]))
+					t.Errorf("Case: %d %#v, expected: \"%s\", got: \"%s\"", i+1, testCase, string(testCase.expectedBuf), string(buf[:n]))
 				}
 				if n > int64(len(buf)) {
 					t.Errorf("Case: %d %#v, expected: %d, got: %d", i+1, testCase, testCase.bufSize, n)
@@ -1245,7 +1218,7 @@ func TestPosixReadFile(t *testing.T) {
 
 		// Common read buffer.
 		var buf = make([]byte, 10)
-		if _, err = posixStorage.ReadFile("mybucket", "myobject", 0, buf, nil); err != errFileAccessDenied {
+		if _, err = posixStorage.ReadFile("mybucket", "myobject", 0, buf, v); err != errFileAccessDenied {
 			t.Errorf("expected: %s, got: %s", errFileAccessDenied, err)
 		}
 	}
@@ -1371,8 +1344,7 @@ func TestPosixAppendFile(t *testing.T) {
 		{"myobject", nil},
 		// TestPosix to use same path of previously created file.
 		{"path/to/my/testobject", nil},
-		// One path segment length is 255 chars long.
-		{"path/to/my/object000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001", nil},
+		// TestPosix to use object is a directory now.
 		{"object-as-dir", errIsNotRegular},
 		// path segment uses previously uploaded object.
 		{"myobject/testobject", errFileAccessDenied},
@@ -1381,17 +1353,6 @@ func TestPosixAppendFile(t *testing.T) {
 		// path length is > 1024 chars long.
 		{"level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001/level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002/level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003/object000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001", errFileNameTooLong},
 	}
-
-	// Add path length > 1024 test specially as OS X system does not support 1024 long path.
-	err = errFileNameTooLong
-	if runtime.GOOS != "darwin" {
-		err = nil
-	}
-	// path length is 1024 chars long.
-	testCases = append(testCases, struct {
-		fileName    string
-		expectedErr error
-	}{"level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001/level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002/level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003/object000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001", err})
 
 	for i, testCase := range testCases {
 		if err = posixStorage.AppendFile("success-vol", testCase.fileName, []byte("hello, world")); err != testCase.expectedErr {
@@ -1440,113 +1401,6 @@ func TestPosixAppendFile(t *testing.T) {
 		// setting the io error count from as specified in the test case.
 		posixType.ioErrCount = int32(6)
 		err = posixType.AppendFile("abc", "yes", []byte("hello, world"))
-		if err != errFaultyDisk {
-			t.Fatalf("Expected \"Faulty Disk\", got: \"%s\"", err)
-		}
-	} else {
-		t.Fatalf("Expected the StorageAPI to be of type *posix")
-	}
-}
-
-// TestPosix posix.PrepareFile()
-func TestPosixPrepareFile(t *testing.T) {
-	// create posix test setup
-	posixStorage, path, err := newPosixTestSetup()
-	if err != nil {
-		t.Fatalf("Unable to create posix test setup, %s", err)
-	}
-	defer os.RemoveAll(path)
-
-	// Setup test environment.
-	if err = posixStorage.MakeVol("success-vol"); err != nil {
-		t.Fatalf("Unable to create volume, %s", err)
-	}
-
-	if err = os.Mkdir(slashpath.Join(path, "success-vol", "object-as-dir"), 0777); err != nil {
-		t.Fatalf("Unable to create directory, %s", err)
-	}
-
-	testCases := []struct {
-		fileName    string
-		expectedErr error
-	}{
-		{"myobject", nil},
-		{"path/to/my/object", nil},
-		// TestPosix to append to previously created file.
-		{"myobject", nil},
-		// TestPosix to use same path of previously created file.
-		{"path/to/my/testobject", nil},
-		{"object-as-dir", errIsNotRegular},
-		// path segment uses previously uploaded object.
-		{"myobject/testobject", errFileAccessDenied},
-		// One path segment length is > 255 chars long.
-		{"path/to/my/object0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001", errFileNameTooLong},
-	}
-
-	// Add path length > 1024 test specially as OS X system does not support 1024 long path.
-	err = errFileNameTooLong
-	if runtime.GOOS != "darwin" {
-		err = nil
-	}
-	// path length is 1024 chars long.
-	testCases = append(testCases, struct {
-		fileName    string
-		expectedErr error
-	}{"level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001/level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002/level0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003/object000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001", err})
-
-	for i, testCase := range testCases {
-		if err = posixStorage.PrepareFile("success-vol", testCase.fileName, 16); err != testCase.expectedErr {
-			t.Errorf("Case: %d, expected: %s, got: %s", i, testCase.expectedErr, err)
-		}
-	}
-
-	// TestPosix for permission denied.
-	if runtime.GOOS != globalWindowsOSName {
-		permDeniedDir := createPermDeniedFile(t)
-		defer removePermDeniedFile(permDeniedDir)
-
-		var posixPermStorage StorageAPI
-		// Initialize posix storage layer for permission denied error.
-		_, err = newPosix(permDeniedDir)
-		if err != nil && !os.IsPermission(err) {
-			t.Fatalf("Unable to initialize posix, %s", err)
-		}
-
-		if err = os.Chmod(permDeniedDir, 0755); err != nil {
-			t.Fatalf("Unable to change permission to temporary directory %v. %v", permDeniedDir, err)
-		}
-
-		posixPermStorage, err = newPosix(permDeniedDir)
-		if err != nil {
-			t.Fatalf("Unable to initialize posix, %s", err)
-		}
-
-		if err = posixPermStorage.PrepareFile("mybucket", "myobject", 16); err != errFileAccessDenied {
-			t.Fatalf("expected: Permission error, got: %s", err)
-		}
-	}
-
-	// TestPosix case with invalid volume name.
-	// A valid volume name should be atleast of size 3.
-	err = posixStorage.PrepareFile("bn", "yes", 16)
-	if err != errVolumeNotFound {
-		t.Fatalf("expected: \"Invalid argument error\", got: \"%s\"", err)
-	}
-
-	// TestPosix case with invalid file size which should be strictly positive
-	err = posixStorage.PrepareFile("success-vol", "yes", -3)
-	if err != errInvalidArgument {
-		t.Fatalf("should fail: %v", err)
-	}
-
-	// TestPosix case with IO error count > max limit.
-
-	// setting ioErrCnt to 6.
-	// should fail with errFaultyDisk.
-	if posixType, ok := posixStorage.(*posix); ok {
-		// setting the io error count from as specified in the test case.
-		posixType.ioErrCount = int32(6)
-		err = posixType.PrepareFile("abc", "yes", 16)
 		if err != errFaultyDisk {
 			t.Fatalf("Expected \"Faulty Disk\", got: \"%s\"", err)
 		}
