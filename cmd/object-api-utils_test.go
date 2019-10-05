@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016-2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,14 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"net/http"
 	"reflect"
+	"strconv"
 	"testing"
 
-	"github.com/golang/snappy"
+	"github.com/klauspost/compress/s2"
+	"github.com/minio/minio/cmd/crypto"
 )
 
 // Tests validate bucket name.
@@ -114,7 +115,6 @@ func TestIsValidObjectName(t *testing.T) {
 		// passing invalid object names.
 		{"", false},
 		{"a/b/c/", false},
-		{"/a/b/c", false},
 		{"../../etc", false},
 		{"../../", false},
 		{"/../../etc", false},
@@ -143,8 +143,8 @@ func TestGetCompleteMultipartMD5(t *testing.T) {
 		expectedResult string
 		expectedErr    string
 	}{
-		// Wrong MD5 hash string
-		{[]CompletePart{{ETag: "wrong-md5-hash-string"}}, "", "encoding/hex: invalid byte: U+0077 'w'"},
+		// Wrong MD5 hash string, returns md5um of hash
+		{[]CompletePart{{ETag: "wrong-md5-hash-string"}}, "0deb8cb07527b4b2669c861cb9653607-1", ""},
 
 		// Single CompletePart with valid MD5 hash string.
 		{[]CompletePart{{ETag: "cf1f738a5924e645913c984e0fe3d708"}}, "10dc1617fbcf0bd0858048cb96e6bd77-1", ""},
@@ -154,16 +154,9 @@ func TestGetCompleteMultipartMD5(t *testing.T) {
 	}
 
 	for i, test := range testCases {
-		result, err := getCompleteMultipartMD5(context.Background(), test.parts)
+		result := getCompleteMultipartMD5(test.parts)
 		if result != test.expectedResult {
 			t.Fatalf("test %d failed: expected: result=%v, got=%v", i+1, test.expectedResult, result)
-		}
-		errString := ""
-		if err != nil {
-			errString = err.Error()
-		}
-		if errString != test.expectedErr {
-			t.Fatalf("test %d failed: expected: err=%v, got=%v", i+1, test.expectedErr, err)
 		}
 	}
 }
@@ -174,17 +167,17 @@ func TestIsMinioMetaBucketName(t *testing.T) {
 		bucket string
 		result bool
 	}{
-		// Minio meta bucket.
+		// MinIO meta bucket.
 		{
 			bucket: minioMetaBucket,
 			result: true,
 		},
-		// Minio meta bucket.
+		// MinIO meta bucket.
 		{
 			bucket: minioMetaMultipartBucket,
 			result: true,
 		},
-		// Minio meta bucket.
+		// MinIO meta bucket.
 		{
 			bucket: minioMetaTmpBucket,
 			result: true,
@@ -307,10 +300,11 @@ func TestIsCompressed(t *testing.T) {
 	testCases := []struct {
 		objInfo ObjectInfo
 		result  bool
+		err     bool
 	}{
 		{
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-compression": "golang/snappy/LZ77",
+				UserDefined: map[string]string{"X-Minio-Internal-compression": compressionAlgorithmV1,
 					"content-type": "application/octet-stream",
 					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
 			},
@@ -318,7 +312,35 @@ func TestIsCompressed(t *testing.T) {
 		},
 		{
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-XYZ": "golang/snappy/LZ77",
+				UserDefined: map[string]string{"X-Minio-Internal-compression": compressionAlgorithmV2,
+					"content-type": "application/octet-stream",
+					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
+			},
+			result: true,
+		},
+		{
+			objInfo: ObjectInfo{
+				UserDefined: map[string]string{"X-Minio-Internal-compression": "unknown/compression/type",
+					"content-type": "application/octet-stream",
+					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
+			},
+			result: true,
+			err:    true,
+		},
+		{
+			objInfo: ObjectInfo{
+				UserDefined: map[string]string{"X-Minio-Internal-compression": compressionAlgorithmV2,
+					"content-type": "application/octet-stream",
+					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2",
+					crypto.SSEIV:   "yes",
+				},
+			},
+			result: true,
+			err:    true,
+		},
+		{
+			objInfo: ObjectInfo{
+				UserDefined: map[string]string{"X-Minio-Internal-XYZ": "klauspost/compress/s2",
 					"content-type": "application/octet-stream",
 					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
 			},
@@ -333,11 +355,21 @@ func TestIsCompressed(t *testing.T) {
 		},
 	}
 	for i, test := range testCases {
-		got := test.objInfo.IsCompressed()
-		if got != test.result {
-			t.Errorf("Test %d - expected %v but received %v",
-				i+1, test.result, got)
-		}
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			got := test.objInfo.IsCompressed()
+			if got != test.result {
+				t.Errorf("IsCompressed: Expected %v but received %v",
+					test.result, got)
+			}
+			got, gErr := test.objInfo.IsCompressedOK()
+			if got != test.result {
+				t.Errorf("IsCompressedOK: Expected %v but received %v",
+					test.result, got)
+			}
+			if gErr != nil != test.err {
+				t.Errorf("IsCompressedOK: want error: %t, got error: %v", test.err, gErr)
+			}
+		})
 	}
 }
 
@@ -373,6 +405,13 @@ func TestExcludeForCompression(t *testing.T) {
 			object: "object.txt",
 			header: http.Header{
 				"Content-Type": []string{"text/plain"},
+			},
+			result: false,
+		},
+		{
+			object: "object",
+			header: http.Header{
+				"Content-Type": []string{"text/something"},
 			},
 			result: false,
 		},
@@ -431,7 +470,7 @@ func TestGetActualSize(t *testing.T) {
 	}{
 		{
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-compression": "golang/snappy/LZ77",
+				UserDefined: map[string]string{"X-Minio-Internal-compression": "klauspost/compress/s2",
 					"X-Minio-Internal-actual-size": "100000001",
 					"content-type":                 "application/octet-stream",
 					"etag":                         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
@@ -450,7 +489,7 @@ func TestGetActualSize(t *testing.T) {
 		},
 		{
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-compression": "golang/snappy/LZ77",
+				UserDefined: map[string]string{"X-Minio-Internal-compression": "klauspost/compress/s2",
 					"X-Minio-Internal-actual-size": "841",
 					"content-type":                 "application/octet-stream",
 					"etag":                         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
@@ -460,7 +499,7 @@ func TestGetActualSize(t *testing.T) {
 		},
 		{
 			objInfo: ObjectInfo{
-				UserDefined: map[string]string{"X-Minio-Internal-compression": "golang/snappy/LZ77",
+				UserDefined: map[string]string{"X-Minio-Internal-compression": "klauspost/compress/s2",
 					"content-type": "application/octet-stream",
 					"etag":         "b3ff3ef3789147152fbfbc50efba4bfd-2"},
 				Parts: []ObjectPartInfo{},
@@ -549,7 +588,7 @@ func TestGetCompressedOffsets(t *testing.T) {
 	}
 }
 
-func TestSnappyCompressReader(t *testing.T) {
+func TestS2CompressReader(t *testing.T) {
 	tests := []struct {
 		name string
 		data []byte
@@ -563,7 +602,8 @@ func TestSnappyCompressReader(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			buf := make([]byte, 100) // make small buffer to ensure multiple reads are required for large case
 
-			r := newSnappyCompressReader(bytes.NewReader(tt.data))
+			r := newS2CompressReader(bytes.NewReader(tt.data))
+			defer r.Close()
 
 			var rdrBuf bytes.Buffer
 			_, err := io.CopyBuffer(&rdrBuf, r, buf)
@@ -572,7 +612,7 @@ func TestSnappyCompressReader(t *testing.T) {
 			}
 
 			var stdBuf bytes.Buffer
-			w := snappy.NewBufferedWriter(&stdBuf)
+			w := s2.NewWriter(&stdBuf)
 			_, err = io.CopyBuffer(w, bytes.NewReader(tt.data), buf)
 			if err != nil {
 				t.Fatal(err)
@@ -591,7 +631,7 @@ func TestSnappyCompressReader(t *testing.T) {
 			}
 
 			var decBuf bytes.Buffer
-			decRdr := snappy.NewReader(&rdrBuf)
+			decRdr := s2.NewReader(&rdrBuf)
 			_, err = io.Copy(&decBuf, decRdr)
 			if err != nil {
 				t.Fatal(err)

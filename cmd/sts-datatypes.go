@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ type AssumeRoleResponse struct {
 
 // AssumeRoleResult - Contains the response to a successful AssumeRole
 // request, including temporary credentials that can be used to make
-// Minio API requests.
+// MinIO API requests.
 type AssumeRoleResult struct {
 	// The identifiers for the temporary security credentials that the operation
 	// returns.
@@ -85,7 +85,7 @@ type AssumeRoleWithWebIdentityResponse struct {
 }
 
 // WebIdentityResult - Contains the response to a successful AssumeRoleWithWebIdentity
-// request, including temporary credentials that can be used to make Minio API requests.
+// request, including temporary credentials that can be used to make MinIO API requests.
 type WebIdentityResult struct {
 	// The identifiers for the temporary security credentials that the operation
 	// returns.
@@ -135,7 +135,7 @@ type AssumeRoleWithClientGrantsResponse struct {
 }
 
 // ClientGrantsResult - Contains the response to a successful AssumeRoleWithClientGrants
-// request, including temporary credentials that can be used to make Minio API requests.
+// request, including temporary credentials that can be used to make MinIO API requests.
 type ClientGrantsResult struct {
 	// The identifiers for the temporary security credentials that the operation
 	// returns.
@@ -173,4 +173,20 @@ type ClientGrantsResult struct {
 	// For OpenID Connect ID tokens, this field contains the value returned by the identity
 	// provider as the token's sub (Subject) claim.
 	SubjectFromToken string `xml:",omitempty"`
+}
+
+// AssumeRoleWithLDAPResponse contains the result of successful
+// AssumeRoleWithLDAPIdentity request
+type AssumeRoleWithLDAPResponse struct {
+	XMLName          xml.Name           `xml:"https://sts.amazonaws.com/doc/2011-06-15/ AssumeRoleWithLDAPIdentityResponse" json:"-"`
+	Result           LDAPIdentityResult `xml:"AssumeRoleWithLDAPIdentityResult"`
+	ResponseMetadata struct {
+		RequestID string `xml:"RequestId,omitempty"`
+	} `xml:"ResponseMetadata,omitempty"`
+}
+
+// LDAPIdentityResult - contains credentials for a successful
+// AssumeRoleWithLDAPIdentity request.
+type LDAPIdentityResult struct {
+	Credentials auth.Credentials `xml:",omitempty"`
 }

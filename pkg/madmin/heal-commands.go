@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -268,4 +268,38 @@ func (adm *AdminClient) Heal(bucket, prefix string, healOpts HealOpts,
 		return healStart, healTaskStatus, errResp
 	}
 	return healStart, healTaskStatus, nil
+}
+
+// BgHealState represents the status of the background heal
+type BgHealState struct {
+	ScannedItemsCount int64
+	LastHealActivity  time.Time
+}
+
+// BackgroundHealStatus returns the background heal status of the
+// current server or cluster.
+func (adm *AdminClient) BackgroundHealStatus() (BgHealState, error) {
+	// Execute POST request to background heal status api
+	resp, err := adm.executeMethod("POST", requestData{relPath: "/v1/background-heal/status"})
+	if err != nil {
+		return BgHealState{}, err
+	}
+	defer closeResponse(resp)
+
+	if resp.StatusCode != http.StatusOK {
+		return BgHealState{}, httpRespToErrorResponse(resp)
+	}
+
+	respBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return BgHealState{}, err
+	}
+
+	var healState BgHealState
+
+	err = json.Unmarshal(respBytes, &healState)
+	if err != nil {
+		return BgHealState{}, err
+	}
+	return healState, nil
 }

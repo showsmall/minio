@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package cmd
 import (
 	"bytes"
 	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -69,7 +68,7 @@ func TestIsValidVolname(t *testing.T) {
 		// cases for which test should fail.
 		// passing invalid bucket names.
 		{"", false},
-		{"/", false},
+		{SlashSeparator, false},
 		{"a", false},
 		{"ab", false},
 		{"ab/", true},
@@ -319,9 +318,9 @@ func TestPosixReadAll(t *testing.T) {
 // TestPosixNewPosix all the cases handled in posix storage layer initialization.
 func TestPosixNewPosix(t *testing.T) {
 	// Temporary dir name.
-	tmpDirName := globalTestTmpDir + "/" + "minio-" + nextSuffix()
+	tmpDirName := globalTestTmpDir + SlashSeparator + "minio-" + nextSuffix()
 	// Temporary file name.
-	tmpFileName := globalTestTmpDir + "/" + "minio-" + nextSuffix()
+	tmpFileName := globalTestTmpDir + SlashSeparator + "minio-" + nextSuffix()
 	f, _ := os.Create(tmpFileName)
 	f.Close()
 	defer os.Remove(tmpFileName)
@@ -839,7 +838,7 @@ func TestPosixPosixListDir(t *testing.T) {
 		} else {
 			t.Errorf("Expected the StorageAPI to be of type *posix")
 		}
-		dirList, err = posixStorage.ListDir(testCase.srcVol, testCase.srcPath, -1)
+		dirList, err = posixStorage.ListDir(testCase.srcVol, testCase.srcPath, -1, "")
 		if err != testCase.expectedErr {
 			t.Fatalf("TestPosix case %d: Expected: \"%s\", got: \"%s\"", i+1, testCase.expectedErr, err)
 		}
@@ -1247,22 +1246,22 @@ var posixReadFileWithVerifyTests = []struct {
 	algorithm BitrotAlgorithm
 	expError  error
 }{
-	{file: "myobject", offset: 0, length: 100, algorithm: SHA256, expError: nil},                     // 0
-	{file: "myobject", offset: 25, length: 74, algorithm: SHA256, expError: nil},                     // 1
-	{file: "myobject", offset: 29, length: 70, algorithm: SHA256, expError: nil},                     // 2
-	{file: "myobject", offset: 100, length: 0, algorithm: SHA256, expError: nil},                     // 3
-	{file: "myobject", offset: 1, length: 120, algorithm: SHA256, expError: hashMismatchError{}},     // 4
-	{file: "myobject", offset: 3, length: 1100, algorithm: SHA256, expError: nil},                    // 5
-	{file: "myobject", offset: 2, length: 100, algorithm: SHA256, expError: hashMismatchError{}},     // 6
-	{file: "myobject", offset: 1000, length: 1001, algorithm: SHA256, expError: nil},                 // 7
-	{file: "myobject", offset: 0, length: 100, algorithm: BLAKE2b512, expError: hashMismatchError{}}, // 8
-	{file: "myobject", offset: 25, length: 74, algorithm: BLAKE2b512, expError: nil},                 // 9
-	{file: "myobject", offset: 29, length: 70, algorithm: BLAKE2b512, expError: hashMismatchError{}}, // 10
-	{file: "myobject", offset: 100, length: 0, algorithm: BLAKE2b512, expError: nil},                 // 11
-	{file: "myobject", offset: 1, length: 120, algorithm: BLAKE2b512, expError: nil},                 // 12
-	{file: "myobject", offset: 3, length: 1100, algorithm: BLAKE2b512, expError: nil},                // 13
-	{file: "myobject", offset: 2, length: 100, algorithm: BLAKE2b512, expError: nil},                 // 14
-	{file: "myobject", offset: 1000, length: 1001, algorithm: BLAKE2b512, expError: nil},             // 15
+	{file: "myobject", offset: 0, length: 100, algorithm: SHA256, expError: nil},                // 0
+	{file: "myobject", offset: 25, length: 74, algorithm: SHA256, expError: nil},                // 1
+	{file: "myobject", offset: 29, length: 70, algorithm: SHA256, expError: nil},                // 2
+	{file: "myobject", offset: 100, length: 0, algorithm: SHA256, expError: nil},                // 3
+	{file: "myobject", offset: 1, length: 120, algorithm: SHA256, expError: errFileCorrupt},     // 4
+	{file: "myobject", offset: 3, length: 1100, algorithm: SHA256, expError: nil},               // 5
+	{file: "myobject", offset: 2, length: 100, algorithm: SHA256, expError: errFileCorrupt},     // 6
+	{file: "myobject", offset: 1000, length: 1001, algorithm: SHA256, expError: nil},            // 7
+	{file: "myobject", offset: 0, length: 100, algorithm: BLAKE2b512, expError: errFileCorrupt}, // 8
+	{file: "myobject", offset: 25, length: 74, algorithm: BLAKE2b512, expError: nil},            // 9
+	{file: "myobject", offset: 29, length: 70, algorithm: BLAKE2b512, expError: errFileCorrupt}, // 10
+	{file: "myobject", offset: 100, length: 0, algorithm: BLAKE2b512, expError: nil},            // 11
+	{file: "myobject", offset: 1, length: 120, algorithm: BLAKE2b512, expError: nil},            // 12
+	{file: "myobject", offset: 3, length: 1100, algorithm: BLAKE2b512, expError: nil},           // 13
+	{file: "myobject", offset: 2, length: 100, algorithm: BLAKE2b512, expError: nil},            // 14
+	{file: "myobject", offset: 1000, length: 1001, algorithm: BLAKE2b512, expError: nil},        // 15
 }
 
 // TestPosixReadFile with bitrot verification - tests the posix level
@@ -1294,9 +1293,7 @@ func TestPosixReadFileWithVerify(t *testing.T) {
 		h := test.algorithm.New()
 		h.Write(data)
 		if test.expError != nil {
-			expected := h.Sum(nil)
 			h.Write([]byte{0})
-			test.expError = hashMismatchError{hex.EncodeToString(h.Sum(nil)), hex.EncodeToString(expected)}
 		}
 
 		buffer := make([]byte, test.length)
@@ -1760,6 +1757,105 @@ func TestPosixStatFile(t *testing.T) {
 		if _, err := posixStorage.StatFile(testCase.srcVol, testCase.srcPath); err != testCase.expectedErr {
 			t.Fatalf("TestPosix case %d: Expected: \"%s\", got: \"%s\"", i+1, testCase.expectedErr, err)
 		}
+	}
+}
+
+// Test posix.VerifyFile()
+func TestPosixVerifyFile(t *testing.T) {
+	// We test 4 cases:
+	// 1) Whole-file bitrot check on proper file
+	// 2) Whole-file bitrot check on corrupted file
+	// 3) Streaming bitrot check on proper file
+	// 4) Streaming bitrot check on corrupted file
+
+	// create posix test setup
+	posixStorage, path, err := newPosixTestSetup()
+	if err != nil {
+		t.Fatalf("Unable to create posix test setup, %s", err)
+	}
+	defer os.RemoveAll(path)
+
+	volName := "testvol"
+	fileName := "testfile"
+	if err := posixStorage.MakeVol(volName); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1) Whole-file bitrot check on proper file
+	size := int64(4*1024*1024 + 100*1024) // 4.1 MB
+	data := make([]byte, size)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	algo := HighwayHash256
+	h := algo.New()
+	h.Write(data)
+	hashBytes := h.Sum(nil)
+	if err := posixStorage.WriteAll(volName, fileName, bytes.NewBuffer(data)); err != nil {
+		t.Fatal(err)
+	}
+	if err := posixStorage.VerifyFile(volName, fileName, size, algo, hashBytes, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2) Whole-file bitrot check on corrupted file
+	if err := posixStorage.AppendFile(volName, fileName, []byte("a")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check if VerifyFile reports the incorrect file length (the correct length is `size+1`)
+	if err := posixStorage.VerifyFile(volName, fileName, size, algo, hashBytes, 0); err == nil {
+		t.Fatal("expected to fail bitrot check")
+	}
+
+	// Check if bitrot fails
+	if err := posixStorage.VerifyFile(volName, fileName, size+1, algo, hashBytes, 0); err == nil {
+		t.Fatal("expected to fail bitrot check")
+	}
+
+	if err := posixStorage.DeleteFile(volName, fileName); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3) Streaming bitrot check on proper file
+	algo = HighwayHash256S
+	shardSize := int64(1024 * 1024)
+	shard := make([]byte, shardSize)
+	w := newStreamingBitrotWriter(posixStorage, volName, fileName, size, algo, shardSize)
+	reader := bytes.NewReader(data)
+	for {
+		// Using io.CopyBuffer instead of this loop will not work for us as io.CopyBuffer
+		// will use bytes.Buffer.ReadFrom() which will not do shardSize'ed writes causing error.
+		n, err := reader.Read(shard)
+		w.Write(shard[:n])
+		if err == nil {
+			continue
+		}
+		if err == io.EOF {
+			break
+		}
+		t.Fatal(err)
+	}
+	w.Close()
+	if err := posixStorage.VerifyFile(volName, fileName, size, algo, nil, shardSize); err != nil {
+		t.Fatal(err)
+	}
+
+	// 4) Streaming bitrot check on corrupted file
+	filePath := pathJoin(posixStorage.String(), volName, fileName)
+	f, err := os.OpenFile(filePath, os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("a"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if err := posixStorage.VerifyFile(volName, fileName, size, algo, nil, shardSize); err == nil {
+		t.Fatal("expected to fail bitrot check")
+	}
+	if err := posixStorage.VerifyFile(volName, fileName, size+1, algo, nil, shardSize); err == nil {
+		t.Fatal("expected to fail bitrot check")
 	}
 }
 

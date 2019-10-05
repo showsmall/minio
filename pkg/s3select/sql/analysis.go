@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -271,6 +271,15 @@ func (e *FuncExpr) analyze(s *Select) (result qProp) {
 		}
 		for _, arg := range e.SFunc.ArgsList {
 			result.combine(arg.analyze(s))
+		}
+		return result
+
+	case sqlFnTrim:
+		if e.Trim.TrimChars != nil {
+			result.combine(e.Trim.TrimChars.analyze(s))
+		}
+		if e.Trim.TrimFrom != nil {
+			result.combine(e.Trim.TrimFrom.analyze(s))
 		}
 		return result
 

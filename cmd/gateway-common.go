@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2017-2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,16 @@ package cmd
 
 import (
 	"net/http"
-	"os"
 	"strings"
 
+	"github.com/minio/minio/cmd/config"
+	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/env"
 	"github.com/minio/minio/pkg/hash"
+	xnet "github.com/minio/minio/pkg/net"
 
-	minio "github.com/minio/minio-go"
+	minio "github.com/minio/minio-go/v6"
 )
 
 var (
@@ -36,6 +39,18 @@ var (
 
 	// CleanMetadataKeys provides cleanMetadataKeys function alias.
 	CleanMetadataKeys = cleanMetadataKeys
+
+	// PathJoin function alias.
+	PathJoin = pathJoin
+
+	// ListObjects function alias.
+	ListObjects = listObjects
+
+	// FilterMatchingPrefix function alias.
+	FilterMatchingPrefix = filterMatchingPrefix
+
+	// IsStringEqual is string equal.
+	IsStringEqual = isStringEqual
 )
 
 // StatInfo -  alias for statInfo
@@ -154,7 +169,7 @@ func FromMinioClientListMultipartsInfo(lmur minio.ListMultipartUploadsResult) Li
 // FromMinioClientObjectInfo converts minio ObjectInfo to gateway ObjectInfo
 func FromMinioClientObjectInfo(bucket string, oi minio.ObjectInfo) ObjectInfo {
 	userDefined := FromMinioClientMetadata(oi.Metadata)
-	userDefined["Content-Type"] = oi.ContentType
+	userDefined[xhttp.ContentType] = oi.ContentType
 
 	return ObjectInfo{
 		Bucket:          bucket,
@@ -164,7 +179,7 @@ func FromMinioClientObjectInfo(bucket string, oi minio.ObjectInfo) ObjectInfo {
 		ETag:            canonicalizeETag(oi.ETag),
 		UserDefined:     userDefined,
 		ContentType:     oi.ContentType,
-		ContentEncoding: oi.Metadata.Get("Content-Encoding"),
+		ContentEncoding: oi.Metadata.Get(xhttp.ContentEncoding),
 		StorageClass:    oi.StorageClass,
 		Expires:         oi.Expires,
 	}
@@ -271,7 +286,7 @@ func ToMinioClientCompleteParts(parts []CompletePart) []minio.CompletePart {
 	return mparts
 }
 
-// ErrorRespToObjectError converts Minio errors to minio object layer errors.
+// ErrorRespToObjectError converts MinIO errors to minio object layer errors.
 func ErrorRespToObjectError(err error, params ...string) error {
 	if err == nil {
 		return nil
@@ -286,13 +301,13 @@ func ErrorRespToObjectError(err error, params ...string) error {
 		object = params[1]
 	}
 
-	if isNetworkOrHostDown(err) {
+	if xnet.IsNetworkOrHostDown(err) {
 		return BackendDown{}
 	}
 
 	minioErr, ok := err.(minio.ErrorResponse)
 	if !ok {
-		// We don't interpret non Minio errors. As minio errors will
+		// We don't interpret non MinIO errors. As minio errors will
 		// have StatusCode to help to convert to object errors.
 		return err
 	}
@@ -304,6 +319,8 @@ func ErrorRespToObjectError(err error, params ...string) error {
 		err = BucketNotEmpty{}
 	case "NoSuchBucketPolicy":
 		err = BucketPolicyNotFound{}
+	case "NoSuchBucketLifecycle":
+		err = BucketLifecycleNotFound{}
 	case "InvalidBucketName":
 		err = BucketNameInvalid{Bucket: bucket}
 	case "InvalidPart":
@@ -334,6 +351,11 @@ func ErrorRespToObjectError(err error, params ...string) error {
 	return err
 }
 
+// ComputeCompleteMultipartMD5 calculates MD5 ETag for complete multipart responses
+func ComputeCompleteMultipartMD5(parts []CompletePart) string {
+	return getCompleteMultipartMD5(parts)
+}
+
 // parse gateway sse env variable
 func parseGatewaySSE(s string) (gatewaySSE, error) {
 	l := strings.Split(s, ";")
@@ -344,14 +366,14 @@ func parseGatewaySSE(s string) (gatewaySSE, error) {
 			gwSlice = append(gwSlice, v)
 			continue
 		}
-		return nil, uiErrInvalidGWSSEValue(nil).Msg("gateway SSE cannot be (%s) ", v)
+		return nil, config.ErrInvalidGWSSEValue(nil).Msg("gateway SSE cannot be (%s) ", v)
 	}
 	return gatewaySSE(gwSlice), nil
 }
 
 // handle gateway env vars
 func handleGatewayEnvVars() {
-	gwsseVal, ok := os.LookupEnv("MINIO_GATEWAY_SSE")
+	gwsseVal, ok := env.Lookup("MINIO_GATEWAY_SSE")
 	if ok {
 		var err error
 		GlobalGatewaySSE, err = parseGatewaySSE(gwsseVal)

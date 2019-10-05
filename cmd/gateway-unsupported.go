@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import (
 	"context"
 
 	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/lifecycle"
 	"github.com/minio/minio/pkg/madmin"
 	"github.com/minio/minio/pkg/policy"
 )
@@ -81,6 +82,22 @@ func (a GatewayUnsupported) DeleteBucketPolicy(ctx context.Context, bucket strin
 	return NotImplemented{}
 }
 
+// SetBucketLifecycle sets lifecycle on bucket
+func (a GatewayUnsupported) SetBucketLifecycle(ctx context.Context, bucket string, lifecycle *lifecycle.Lifecycle) error {
+	logger.LogIf(ctx, NotImplemented{})
+	return NotImplemented{}
+}
+
+// GetBucketLifecycle will get lifecycle on bucket
+func (a GatewayUnsupported) GetBucketLifecycle(ctx context.Context, bucket string) (*lifecycle.Lifecycle, error) {
+	return nil, NotImplemented{}
+}
+
+// DeleteBucketLifecycle deletes all lifecycle on bucket
+func (a GatewayUnsupported) DeleteBucketLifecycle(ctx context.Context, bucket string) error {
+	return NotImplemented{}
+}
+
 // ReloadFormat - Not implemented stub.
 func (a GatewayUnsupported) ReloadFormat(ctx context.Context, dryRun bool) error {
 	return NotImplemented{}
@@ -99,6 +116,11 @@ func (a GatewayUnsupported) HealBucket(ctx context.Context, bucket string, dryRu
 // ListBucketsHeal - Not implemented stub
 func (a GatewayUnsupported) ListBucketsHeal(ctx context.Context) (buckets []BucketInfo, err error) {
 	return nil, NotImplemented{}
+}
+
+// ListObjectsHeal - Not implemented stub
+func (a GatewayUnsupported) ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result ListObjectsInfo, err error) {
+	return ListObjectsInfo{}, NotImplemented{}
 }
 
 // HealObject - Not implemented stub
@@ -120,11 +142,6 @@ func (a GatewayUnsupported) HealObjects(ctx context.Context, bucket, prefix stri
 func (a GatewayUnsupported) CopyObject(ctx context.Context, srcBucket string, srcObject string, destBucket string, destObject string,
 	srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (objInfo ObjectInfo, err error) {
 	return objInfo, NotImplemented{}
-}
-
-// RefreshBucketPolicy refreshes cache policy with what's on disk.
-func (a GatewayUnsupported) RefreshBucketPolicy(ctx context.Context, bucket string) error {
-	return NotImplemented{}
 }
 
 // IsNotificationSupported returns whether bucket notification is applicable for this layer.

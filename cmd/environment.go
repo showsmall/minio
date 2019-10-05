@@ -1,4 +1,4 @@
-// Minio Cloud Storage, (C) 2016, 2017, 2018 Minio, Inc.
+// MinIO Cloud Storage, (C) 2016, 2017, 2018 MinIO, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,11 +18,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
 	"github.com/minio/minio/cmd/crypto"
+	"github.com/minio/minio/pkg/env"
 )
 
 const (
@@ -67,7 +67,7 @@ const (
 
 	// EnvVaultCAPath is the environment variable used to specify the
 	// path to a directory of PEM-encoded CA cert files. These CA cert
-	// files are used to authenticate Minio to Vault over mTLS.
+	// files are used to authenticate MinIO to Vault over mTLS.
 	EnvVaultCAPath = "MINIO_SSE_VAULT_CAPATH"
 
 	// EnvVaultNamespace is the environment variable used to specify
@@ -75,30 +75,6 @@ const (
 	// version of Hashicorp Vault is used.
 	EnvVaultNamespace = "MINIO_SSE_VAULT_NAMESPACE"
 )
-
-// Environment provides functions for accessing environment
-// variables.
-var Environment = environment{}
-
-type environment struct{}
-
-// Get retrieves the value of the environment variable named
-// by the key. If the variable is present in the environment the
-// value (which may be empty) is returned. Otherwise it returns
-// the specified default value.
-func (environment) Get(key, defaultValue string) string {
-	if v, ok := os.LookupEnv(key); ok {
-		return v
-	}
-	return defaultValue
-}
-
-// Lookup retrieves the value of the environment variable named
-// by the key. If the variable is present in the environment the
-// value (which may be empty) is returned and the boolean is true.
-// Otherwise the returned value will be empty and the boolean will
-// be false.
-func (environment) Lookup(key string) (string, bool) { return os.LookupEnv(key) }
 
 // LookupKMSConfig extracts the KMS configuration provided by environment
 // variables and merge them with the provided KMS configuration. The
@@ -113,7 +89,7 @@ func (environment) Lookup(key string) (string, bool) { return os.LookupEnv(key) 
 //
 // It sets the global KMS configuration according to the merged configuration
 // on success.
-func (env environment) LookupKMSConfig(config crypto.KMSConfig) (err error) {
+func LookupKMSConfig(config crypto.KMSConfig) (err error) {
 	// Lookup Hashicorp-Vault configuration & overwrite config entry if ENV var is present
 	config.Vault.Endpoint = env.Get(EnvVaultEndpoint, config.Vault.Endpoint)
 	config.Vault.CAPath = env.Get(EnvVaultCAPath, config.Vault.CAPath)

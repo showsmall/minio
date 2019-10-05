@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,13 +29,13 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
 
+	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/handlers"
 
@@ -52,43 +52,33 @@ func IsErrIgnored(err error, ignoredErrs ...error) bool {
 // IsErr returns whether given error is exact error.
 func IsErr(err error, errs ...error) bool {
 	for _, exactErr := range errs {
-		if err == exactErr {
+		if errors.Is(err, exactErr) {
 			return true
 		}
 	}
 	return false
 }
 
-// Close Http tracing file.
-func stopHTTPTrace() {
-	if globalHTTPTraceFile != nil {
-		reqInfo := (&logger.ReqInfo{}).AppendTags("traceFile", globalHTTPTraceFile.Name())
-		ctx := logger.SetReqInfo(context.Background(), reqInfo)
-		logger.LogIf(ctx, globalHTTPTraceFile.Close())
-		globalHTTPTraceFile = nil
+func request2BucketObjectName(r *http.Request) (bucketName, objectName string) {
+	path, err := getResource(r.URL.Path, r.Host, globalDomainNames)
+	if err != nil {
+		logger.CriticalIf(context.Background(), err)
 	}
-}
-
-// make a copy of http.Header
-func cloneHeader(h http.Header) http.Header {
-	h2 := make(http.Header, len(h))
-	for k, vv := range h {
-		vv2 := make([]string, len(vv))
-		copy(vv2, vv)
-		h2[k] = vv2
-
-	}
-	return h2
+	return urlPath2BucketObjectName(path)
 }
 
 // Convert url path into bucket and object name.
 func urlPath2BucketObjectName(path string) (bucketName, objectName string) {
+	if path == "" || path == SlashSeparator {
+		return "", ""
+	}
+
 	// Trim any preceding slash separator.
-	urlPath := strings.TrimPrefix(path, slashSeparator)
+	urlPath := strings.TrimPrefix(path, SlashSeparator)
 
 	// Split urlpath using slash separator into a given number of
 	// expected tokens.
-	tokens := strings.SplitN(urlPath, slashSeparator, 2)
+	tokens := strings.SplitN(urlPath, SlashSeparator, 2)
 	bucketName = tokens[0]
 	if len(tokens) == 2 {
 		objectName = tokens[1]
@@ -286,7 +276,7 @@ var globalProfiler minioProfiler
 
 // dump the request into a string in JSON format.
 func dumpRequest(r *http.Request) string {
-	header := cloneHeader(r.Header)
+	header := r.Header.Clone()
 	header.Set("Host", r.Host)
 	// Replace all '%' to '%%' so that printer format parser
 	// to ignore URL encoded values.
@@ -423,46 +413,16 @@ func newContext(r *http.Request, w http.ResponseWriter, api string) context.Cont
 		object = prefix
 	}
 	reqInfo := &logger.ReqInfo{
-		DeploymentID: w.Header().Get(responseDeploymentIDKey),
-		RequestID:    w.Header().Get(responseRequestIDKey),
+		DeploymentID: globalDeploymentID,
+		RequestID:    w.Header().Get(xhttp.AmzRequestID),
 		RemoteHost:   handlers.GetSourceIP(r),
+		Host:         getHostName(r),
 		UserAgent:    r.UserAgent(),
 		API:          api,
 		BucketName:   bucket,
 		ObjectName:   object,
 	}
-	return logger.SetReqInfo(context.Background(), reqInfo)
-}
-
-// isNetworkOrHostDown - if there was a network error or if the host is down.
-func isNetworkOrHostDown(err error) bool {
-	if err == nil {
-		return false
-	}
-	switch err.(type) {
-	case *net.DNSError, *net.OpError, net.UnknownNetworkError:
-		return true
-	case *url.Error:
-		// For a URL error, where it replies back "connection closed"
-		if strings.Contains(err.Error(), "Connection closed by foreign host") {
-			return true
-		}
-		return true
-	default:
-		if strings.Contains(err.Error(), "net/http: TLS handshake timeout") {
-			// If error is - tlsHandshakeTimeoutError,.
-			return true
-		} else if strings.Contains(err.Error(), "i/o timeout") {
-			// If error is - tcp timeoutError.
-			return true
-		} else if strings.Contains(err.Error(), "connection timed out") {
-			// If err is a net.Dial timeout.
-			return true
-		} else if strings.Contains(err.Error(), "net/http: HTTP/1.x transport connection broken") {
-			return true
-		}
-	}
-	return false
+	return logger.SetReqInfo(r.Context(), reqInfo)
 }
 
 // Used for registering with rest handlers (have a look at registerStorageRESTHandlers for usage example)
@@ -473,4 +433,57 @@ func restQueries(keys ...string) []string {
 		accumulator = append(accumulator, key, "{"+key+":.*}")
 	}
 	return accumulator
+}
+
+// Reverse the input order of a slice of string
+func reverseStringSlice(input []string) {
+	for left, right := 0, len(input)-1; left < right; left, right = left+1, right-1 {
+		input[left], input[right] = input[right], input[left]
+	}
+}
+
+// lcp finds the longest common prefix of the input strings.
+// It compares by bytes instead of runes (Unicode code points).
+// It's up to the caller to do Unicode normalization if desired
+// (e.g. see golang.org/x/text/unicode/norm).
+func lcp(l []string) string {
+	// Special cases first
+	switch len(l) {
+	case 0:
+		return ""
+	case 1:
+		return l[0]
+	}
+	// LCP of min and max (lexigraphically)
+	// is the LCP of the whole set.
+	min, max := l[0], l[0]
+	for _, s := range l[1:] {
+		switch {
+		case s < min:
+			min = s
+		case s > max:
+			max = s
+		}
+	}
+	for i := 0; i < len(min) && i < len(max); i++ {
+		if min[i] != max[i] {
+			return min[:i]
+		}
+	}
+	// In the case where lengths are not equal but all bytes
+	// are equal, min is the answer ("foo" < "foobar").
+	return min
+}
+
+// Returns the mode in which MinIO is running
+func getMinioMode() string {
+	mode := globalMinioModeFS
+	if globalIsDistXL {
+		mode = globalMinioModeDistXL
+	} else if globalIsXL {
+		mode = globalMinioModeXL
+	} else if globalIsGateway {
+		mode = globalMinioModeGatewayPrefix + globalGatewayName
+	}
+	return mode
 }

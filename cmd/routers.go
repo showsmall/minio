@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,20 +42,18 @@ func registerDistXLRouters(router *mux.Router, endpoints EndpointList) {
 	registerPeerRESTHandlers(router)
 
 	// Register distributed namespace lock.
-	registerDistNSLockRouter(router)
+	registerLockRESTHandlers(router)
 
 }
 
 // List of some generic handlers which are applied for all incoming requests.
 var globalHandlers = []HandlerFunc{
-	// set x-amz-request-id, x-minio-deployment-id header.
+	// set x-amz-request-id header.
 	addCustomHeaders,
 	// set HTTP security headers such as Content-Security-Policy.
 	addSecurityHeaders,
 	// Forward path style requests to actual host in a bucket federated setup.
 	setBucketForwardingHandler,
-	// Ratelimit the incoming requests using a token bucket algorithm
-	setRateLimitHandler,
 	// Validate all the incoming requests.
 	setRequestValidityHandler,
 	// Network statistics
@@ -121,8 +119,9 @@ func configureServerHandler(endpoints EndpointList) (http.Handler, error) {
 		}
 	}
 
-	// Add API router, additionally all server mode support encryption.
-	registerAPIRouter(router, true)
+	// Add API router, additionally all server mode support encryption
+	// but don't allow SSE-KMS.
+	registerAPIRouter(router, true, false)
 
 	// Register rest of the handlers.
 	return registerHandlers(router, globalHandlers...), nil

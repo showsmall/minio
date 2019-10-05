@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,11 @@
 
 package sql
 
-import "github.com/bcicen/jstream"
+import (
+	"io"
+
+	"github.com/bcicen/jstream"
+)
 
 // SelectObjectFormat specifies the format of the underlying data
 type SelectObjectFormat int
@@ -36,8 +40,12 @@ const (
 type Record interface {
 	Get(name string) (*Value, error)
 	Set(name string, value *Value) error
-	MarshalCSV(fieldDelimiter rune) ([]byte, error)
-	MarshalJSON() ([]byte, error)
+	WriteCSV(writer io.Writer, fieldDelimiter rune) error
+	WriteJSON(writer io.Writer) error
+
+	// Clone the record and if possible use the destination provided.
+	Clone(dst Record) Record
+	Reset()
 
 	// Returns underlying representation
 	Raw() (SelectObjectFormat, interface{})

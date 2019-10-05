@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,12 @@ package iampolicy
 
 import (
 	"github.com/minio/minio/pkg/policy"
+)
+
+// Policy claim constants
+const (
+	PolicyName        = "policy"
+	SessionPolicyName = "sessionPolicy"
 )
 
 // ReadWrite - provides full access to all buckets and all objects

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@ type aggVal struct {
 func newAggVal(fn FuncName) *aggVal {
 	switch fn {
 	case aggFnAvg, aggFnSum:
-		return &aggVal{runningSum: FromInt(0)}
+		return &aggVal{runningSum: FromFloat(0)}
 	case aggFnMin:
 		return &aggVal{runningMin: FromInt(0)}
 	case aggFnMax:
@@ -103,12 +103,14 @@ func (e *FuncExpr) evalAggregationNode(r Record) error {
 
 		// Here, we diverge from Amazon S3 behavior by
 		// inferring untyped values are numbers.
-		if i, ok := argVal.bytesToInt(); ok {
-			argVal.setInt(i)
-		} else if f, ok := argVal.bytesToFloat(); ok {
-			argVal.setFloat(f)
-		} else {
-			return errNonNumericArg(funcName)
+		if !argVal.isNumeric() {
+			if i, ok := argVal.bytesToInt(); ok {
+				argVal.setInt(i)
+			} else if f, ok := argVal.bytesToFloat(); ok {
+				argVal.setFloat(f)
+			} else {
+				return errNonNumericArg(funcName)
+			}
 		}
 	}
 
@@ -124,8 +126,14 @@ func (e *FuncExpr) evalAggregationNode(r Record) error {
 		// For all non-null values, the count is incremented.
 		e.aggregate.runningCount++
 
-	case aggFnAvg:
+	case aggFnAvg, aggFnSum:
 		e.aggregate.runningCount++
+		// Convert to float.
+		f, ok := argVal.ToFloat()
+		if !ok {
+			return fmt.Errorf("Could not convert value %v (%s) to a number", argVal.value, argVal.GetTypeString())
+		}
+		argVal.setFloat(f)
 		err = e.aggregate.runningSum.arithOp(opPlus, argVal)
 
 	case aggFnMin:
@@ -133,9 +141,6 @@ func (e *FuncExpr) evalAggregationNode(r Record) error {
 
 	case aggFnMax:
 		err = e.aggregate.runningMax.minmax(argVal, true, isFirstRow)
-
-	case aggFnSum:
-		err = e.aggregate.runningSum.arithOp(opPlus, argVal)
 
 	default:
 		err = errInvalidAggregation

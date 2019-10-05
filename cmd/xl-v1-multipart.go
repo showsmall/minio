@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,15 +47,16 @@ func (xl xlObjects) getMultipartSHADir(bucket, object string) string {
 	return getSHA256Hash([]byte(pathJoin(bucket, object)))
 }
 
-// isUploadIDExists - verify if a given uploadID exists and is valid.
-func (xl xlObjects) isUploadIDExists(ctx context.Context, bucket, object, uploadID string) bool {
-	return xl.isObject(minioMetaMultipartBucket, xl.getUploadIDDir(bucket, object, uploadID))
+// checkUploadIDExists - verify if a given uploadID exists and is valid.
+func (xl xlObjects) checkUploadIDExists(ctx context.Context, bucket, object, uploadID string) error {
+	_, err := xl.getObjectInfo(ctx, minioMetaMultipartBucket, xl.getUploadIDDir(bucket, object, uploadID))
+	return err
 }
 
 // Removes part given by partName belonging to a mulitpart upload from minioMetaBucket
 func (xl xlObjects) removeObjectPart(bucket, object, uploadID, partName string) {
 	curpartPath := path.Join(bucket, object, uploadID, partName)
-	wg := sync.WaitGroup{}
+	var wg sync.WaitGroup
 	for i, disk := range xl.getDisks() {
 		if disk == nil {
 			continue
@@ -102,7 +103,7 @@ func (xl xlObjects) statPart(ctx context.Context, bucket, object, uploadID, part
 
 // commitXLMetadata - commit `xl.json` from source prefix to destination prefix in the given slice of disks.
 func commitXLMetadata(ctx context.Context, disks []StorageAPI, srcBucket, srcPrefix, dstBucket, dstPrefix string, quorum int) ([]StorageAPI, error) {
-	var wg = &sync.WaitGroup{}
+	var wg sync.WaitGroup
 	var mErrs = make([]error, len(disks))
 
 	srcJSONFile := path.Join(srcPrefix, xlMetaJSONFile)
@@ -122,23 +123,13 @@ func commitXLMetadata(ctx context.Context, disks []StorageAPI, srcBucket, srcPre
 			defer disk.DeleteFile(srcBucket, srcPrefix)
 
 			// Renames `xl.json` from source prefix to destination prefix.
-			rErr := disk.RenameFile(srcBucket, srcJSONFile, dstBucket, dstJSONFile)
-			if rErr != nil {
-				logger.LogIf(ctx, rErr)
-				mErrs[index] = rErr
-				return
-			}
-			mErrs[index] = nil
+			mErrs[index] = disk.RenameFile(srcBucket, srcJSONFile, dstBucket, dstJSONFile)
 		}(index, disk)
 	}
 	// Wait for all the routines.
 	wg.Wait()
 
 	err := reduceWriteQuorumErrs(ctx, mErrs, objectOpIgnoredErrs, quorum)
-	if err == errXLWriteQuorum {
-		// Delete all `xl.json` successfully renamed.
-		deleteAllXLMetadata(ctx, disks, dstBucket, dstPrefix, mErrs)
-	}
 	return evalDisks(disks, mErrs), err
 }
 
@@ -163,7 +154,7 @@ func (xl xlObjects) ListMultipartUploads(ctx context.Context, bucket, object, ke
 		if disk == nil {
 			continue
 		}
-		uploadIDs, err := disk.ListDir(minioMetaMultipartBucket, xl.getMultipartSHADir(bucket, object), -1)
+		uploadIDs, err := disk.ListDir(minioMetaMultipartBucket, xl.getMultipartSHADir(bucket, object), -1, "")
 		if err != nil {
 			if err == errFileNotFound {
 				return result, nil
@@ -172,7 +163,7 @@ func (xl xlObjects) ListMultipartUploads(ctx context.Context, bucket, object, ke
 			return result, err
 		}
 		for i := range uploadIDs {
-			uploadIDs[i] = strings.TrimSuffix(uploadIDs[i], slashSeparator)
+			uploadIDs[i] = strings.TrimSuffix(uploadIDs[i], SlashSeparator)
 		}
 		sort.Strings(uploadIDs)
 		for _, uploadID := range uploadIDs {
@@ -216,20 +207,28 @@ func (xl xlObjects) newMultipartUpload(ctx context.Context, bucket string, objec
 	uploadIDPath := xl.getUploadIDDir(bucket, object, uploadID)
 	tempUploadIDPath := uploadID
 
-	// Write updated `xl.json` to all disks.
-	disks, err := writeSameXLMetadata(ctx, xl.getDisks(), minioMetaTmpBucket, tempUploadIDPath, xlMeta, writeQuorum)
-	if err != nil {
-		return "", toObjectErr(err, minioMetaTmpBucket, tempUploadIDPath)
-	}
-	// delete the tmp path later in case we fail to rename (ignore
-	// returned errors) - this will be a no-op in case of a rename
+	// Delete the tmp path later in case we fail to commit (ignore
+	// returned errors) - this will be a no-op in case of a commit
 	// success.
 	defer xl.deleteObject(ctx, minioMetaTmpBucket, tempUploadIDPath, writeQuorum, false)
 
+	onlineDisks := xl.getDisks()
+	var partsMetadata = make([]xlMetaV1, len(onlineDisks))
+	for i := range onlineDisks {
+		partsMetadata[i] = xlMeta
+	}
+
+	var err error
+	// Write updated `xl.json` to all disks.
+	onlineDisks, err = writeUniqueXLMetadata(ctx, onlineDisks, minioMetaTmpBucket, tempUploadIDPath, partsMetadata, writeQuorum)
+	if err != nil {
+		return "", toObjectErr(err, minioMetaTmpBucket, tempUploadIDPath)
+	}
+
 	// Attempt to rename temp upload object to actual upload path object
-	_, rErr := rename(ctx, disks, minioMetaTmpBucket, tempUploadIDPath, minioMetaMultipartBucket, uploadIDPath, true, writeQuorum, nil)
-	if rErr != nil {
-		return "", toObjectErr(rErr, minioMetaMultipartBucket, uploadIDPath)
+	_, err = rename(ctx, onlineDisks, minioMetaTmpBucket, tempUploadIDPath, minioMetaMultipartBucket, uploadIDPath, true, writeQuorum, nil)
+	if err != nil {
+		return "", toObjectErr(err, minioMetaMultipartBucket, uploadIDPath)
 	}
 
 	// Return success.
@@ -260,7 +259,7 @@ func (xl xlObjects) NewMultipartUpload(ctx context.Context, bucket, object strin
 func (xl xlObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject, uploadID string, partID int, startOffset int64, length int64, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (pi PartInfo, e error) {
 	// Hold read locks on source object only if we are
 	// going to read data from source object.
-	objectSRLock := xl.nsMutex.NewNSLock(srcBucket, srcObject)
+	objectSRLock := xl.nsMutex.NewNSLock(ctx, srcBucket, srcObject)
 	if err := objectSRLock.GetRLock(globalObjectTimeout); err != nil {
 		return pi, err
 	}
@@ -302,15 +301,15 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	uploadIDLockPath := xl.getUploadIDLockPath(bucket, object, uploadID)
 
 	// pre-check upload id lock.
-	preUploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDLockPath)
+	preUploadIDLock := xl.nsMutex.NewNSLock(ctx, minioMetaMultipartBucket, uploadIDLockPath)
 	if err := preUploadIDLock.GetRLock(globalOperationTimeout); err != nil {
 		return pi, err
 	}
 
 	// Validates if upload ID exists.
-	if !xl.isUploadIDExists(ctx, bucket, object, uploadID) {
+	if err := xl.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {
 		preUploadIDLock.RUnlock()
-		return pi, InvalidUploadID{UploadID: uploadID}
+		return pi, toObjectErr(err, bucket, object, uploadID)
 	}
 
 	// Read metadata associated with the object from all disks.
@@ -400,15 +399,15 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	}
 
 	// post-upload check (write) lock
-	postUploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDLockPath)
+	postUploadIDLock := xl.nsMutex.NewNSLock(ctx, minioMetaMultipartBucket, uploadIDLockPath)
 	if err = postUploadIDLock.GetLock(globalOperationTimeout); err != nil {
 		return pi, err
 	}
 	defer postUploadIDLock.Unlock()
 
-	// Validate again if upload ID still exists.
-	if !xl.isUploadIDExists(ctx, bucket, object, uploadID) {
-		return pi, InvalidUploadID{UploadID: uploadID}
+	// Validates if upload ID exists.
+	if err := xl.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {
+		return pi, toObjectErr(err, bucket, object, uploadID)
 	}
 
 	// Rename temporary part file to its final location.
@@ -452,11 +451,14 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	}
 
 	// Write all the checksum metadata.
-	newUUID := mustGetUUID()
-	tempXLMetaPath := newUUID
+	tempXLMetaPath := mustGetUUID()
+
+	// Cleanup in case of xl.json writing failure
+	defer xl.deleteObject(ctx, minioMetaTmpBucket, tempXLMetaPath, writeQuorum, false)
 
 	// Writes a unique `xl.json` each disk carrying new checksum related information.
-	if onlineDisks, err = writeUniqueXLMetadata(ctx, onlineDisks, minioMetaTmpBucket, tempXLMetaPath, partsMetadata, writeQuorum); err != nil {
+	onlineDisks, err = writeUniqueXLMetadata(ctx, onlineDisks, minioMetaTmpBucket, tempXLMetaPath, partsMetadata, writeQuorum)
+	if err != nil {
 		return pi, toObjectErr(err, minioMetaTmpBucket, tempXLMetaPath)
 	}
 
@@ -492,15 +494,15 @@ func (xl xlObjects) ListObjectParts(ctx context.Context, bucket, object, uploadI
 	}
 	// Hold lock so that there is no competing
 	// abort-multipart-upload or complete-multipart-upload.
-	uploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket,
+	uploadIDLock := xl.nsMutex.NewNSLock(ctx, minioMetaMultipartBucket,
 		xl.getUploadIDLockPath(bucket, object, uploadID))
 	if err := uploadIDLock.GetLock(globalListingTimeout); err != nil {
 		return result, err
 	}
 	defer uploadIDLock.Unlock()
 
-	if !xl.isUploadIDExists(ctx, bucket, object, uploadID) {
-		return result, InvalidUploadID{UploadID: uploadID}
+	if err := xl.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {
+		return result, toObjectErr(err, bucket, object, uploadID)
 	}
 
 	uploadIDPath := xl.getUploadIDDir(bucket, object, uploadID)
@@ -518,7 +520,7 @@ func (xl xlObjects) ListObjectParts(ctx context.Context, bucket, object, uploadI
 
 	reducedErr := reduceWriteQuorumErrs(ctx, errs, objectOpIgnoredErrs, writeQuorum)
 	if reducedErr == errXLWriteQuorum {
-		return result, toObjectErr(err, minioMetaMultipartBucket, uploadIDPath)
+		return result, toObjectErr(reducedErr, minioMetaMultipartBucket, uploadIDPath)
 	}
 
 	_, modTime := listOnlineDisks(storageDisks, partsMetadata, errs)
@@ -596,7 +598,7 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 		return oi, err
 	}
 	// Hold write lock on the object.
-	destLock := xl.nsMutex.NewNSLock(bucket, object)
+	destLock := xl.nsMutex.NewNSLock(ctx, bucket, object)
 	if err := destLock.GetLock(globalObjectTimeout); err != nil {
 		return oi, err
 	}
@@ -611,14 +613,14 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 	//
 	// 2) no one does a parallel complete-multipart-upload on this
 	// multipart upload
-	uploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDLockPath)
+	uploadIDLock := xl.nsMutex.NewNSLock(ctx, minioMetaMultipartBucket, uploadIDLockPath)
 	if err := uploadIDLock.GetLock(globalOperationTimeout); err != nil {
 		return oi, err
 	}
 	defer uploadIDLock.Unlock()
 
-	if !xl.isUploadIDExists(ctx, bucket, object, uploadID) {
-		return oi, InvalidUploadID{UploadID: uploadID}
+	if err := xl.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {
+		return oi, toObjectErr(err, bucket, object, uploadID)
 	}
 
 	// Check if an object is present as one of the parent dir.
@@ -628,10 +630,7 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 	}
 
 	// Calculate s3 compatible md5sum for complete multipart.
-	s3MD5, err := getCompleteMultipartMD5(ctx, parts)
-	if err != nil {
-		return oi, err
-	}
+	s3MD5 := getCompleteMultipartMD5(parts)
 
 	// Read metadata associated with the object from all disks.
 	partsMetadata, errs := readAllXLMetadata(ctx, xl.getDisks(), minioMetaMultipartBucket, uploadIDPath)
@@ -731,8 +730,6 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 	// Save the consolidated actual size.
 	xlMeta.Meta[ReservedMetadataPrefix+"actual-size"] = strconv.FormatInt(objectActualSize, 10)
 
-	tempUploadIDPath := uploadID
-
 	// Update all xl metadata, make sure to not modify fields like
 	// checksum which are different on each disks.
 	for index := range partsMetadata {
@@ -741,13 +738,18 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 		partsMetadata[index].Parts = xlMeta.Parts
 	}
 
+	tempXLMetaPath := mustGetUUID()
+
+	// Cleanup in case of failure
+	defer xl.deleteObject(ctx, minioMetaTmpBucket, tempXLMetaPath, writeQuorum, false)
+
 	// Write unique `xl.json` for each disk.
-	if onlineDisks, err = writeUniqueXLMetadata(ctx, onlineDisks, minioMetaTmpBucket, tempUploadIDPath, partsMetadata, writeQuorum); err != nil {
-		return oi, toObjectErr(err, minioMetaTmpBucket, tempUploadIDPath)
+	if onlineDisks, err = writeUniqueXLMetadata(ctx, onlineDisks, minioMetaTmpBucket, tempXLMetaPath, partsMetadata, writeQuorum); err != nil {
+		return oi, toObjectErr(err, minioMetaTmpBucket, tempXLMetaPath)
 	}
 
 	var rErr error
-	onlineDisks, rErr = commitXLMetadata(ctx, onlineDisks, minioMetaTmpBucket, tempUploadIDPath, minioMetaMultipartBucket, uploadIDPath, writeQuorum)
+	onlineDisks, rErr = commitXLMetadata(ctx, onlineDisks, minioMetaTmpBucket, tempXLMetaPath, minioMetaMultipartBucket, uploadIDPath, writeQuorum)
 	if rErr != nil {
 		return oi, toObjectErr(rErr, minioMetaMultipartBucket, uploadIDPath)
 	}
@@ -815,14 +817,15 @@ func (xl xlObjects) AbortMultipartUpload(ctx context.Context, bucket, object, up
 	uploadIDLockPath := xl.getUploadIDLockPath(bucket, object, uploadID)
 	// Hold lock so that there is no competing
 	// complete-multipart-upload or put-object-part.
-	uploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDLockPath)
+	uploadIDLock := xl.nsMutex.NewNSLock(ctx, minioMetaMultipartBucket, uploadIDLockPath)
 	if err := uploadIDLock.GetLock(globalOperationTimeout); err != nil {
 		return err
 	}
 	defer uploadIDLock.Unlock()
 
-	if !xl.isUploadIDExists(ctx, bucket, object, uploadID) {
-		return InvalidUploadID{UploadID: uploadID}
+	// Validates if upload ID exists.
+	if err := xl.checkUploadIDExists(ctx, bucket, object, uploadID); err != nil {
+		return toObjectErr(err, bucket, object, uploadID)
 	}
 
 	// Read metadata associated with the object from all disks.
@@ -871,12 +874,12 @@ func (xl xlObjects) cleanupStaleMultipartUploads(ctx context.Context, cleanupInt
 // Remove the old multipart uploads on the given disk.
 func (xl xlObjects) cleanupStaleMultipartUploadsOnDisk(ctx context.Context, disk StorageAPI, expiry time.Duration) {
 	now := time.Now()
-	shaDirs, err := disk.ListDir(minioMetaMultipartBucket, "", -1)
+	shaDirs, err := disk.ListDir(minioMetaMultipartBucket, "", -1, "")
 	if err != nil {
 		return
 	}
 	for _, shaDir := range shaDirs {
-		uploadIDDirs, err := disk.ListDir(minioMetaMultipartBucket, shaDir, -1)
+		uploadIDDirs, err := disk.ListDir(minioMetaMultipartBucket, shaDir, -1, "")
 		if err != nil {
 			continue
 		}

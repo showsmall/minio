@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/minio/minio/cmd/config"
 )
 
 const (
@@ -104,20 +106,20 @@ func parseStorageClass(storageClassEnv string) (sc storageClass, err error) {
 
 	// only two elements allowed in the string - "scheme" and "number of parity disks"
 	if len(s) > 2 {
-		return storageClass{}, uiErrStorageClassValue(nil).Msg("Too many sections in " + storageClassEnv)
+		return storageClass{}, config.ErrStorageClassValue(nil).Msg("Too many sections in " + storageClassEnv)
 	} else if len(s) < 2 {
-		return storageClass{}, uiErrStorageClassValue(nil).Msg("Too few sections in " + storageClassEnv)
+		return storageClass{}, config.ErrStorageClassValue(nil).Msg("Too few sections in " + storageClassEnv)
 	}
 
 	// only allowed scheme is "EC"
 	if s[0] != supportedStorageClassScheme {
-		return storageClass{}, uiErrStorageClassValue(nil).Msg("Unsupported scheme " + s[0] + ". Supported scheme is EC")
+		return storageClass{}, config.ErrStorageClassValue(nil).Msg("Unsupported scheme " + s[0] + ". Supported scheme is EC")
 	}
 
 	// Number of parity disks should be integer
 	parityDisks, err := strconv.Atoi(s[1])
 	if err != nil {
-		return storageClass{}, uiErrStorageClassValue(err)
+		return storageClass{}, config.ErrStorageClassValue(err)
 	}
 
 	sc = storageClass{

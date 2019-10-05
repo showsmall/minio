@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,7 +64,6 @@ func testGetObjectInfo(obj ObjectLayer, instanceType string, t TestErrHandler) {
 	}{
 		// Test cases with invalid bucket names ( Test number 1-4 ).
 		{".test", "", ObjectInfo{}, BucketNameInvalid{Bucket: ".test"}, false},
-		{"Test", "", ObjectInfo{}, BucketNameInvalid{Bucket: "Test"}, false},
 		{"---", "", ObjectInfo{}, BucketNameInvalid{Bucket: "---"}, false},
 		{"ad", "", ObjectInfo{}, BucketNameInvalid{Bucket: "ad"}, false},
 		// Test cases with valid but non-existing bucket names (Test number 5-6).

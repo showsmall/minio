@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,23 +18,21 @@ package cmd
 
 import (
 	"crypto/x509"
-	"fmt"
 	"os"
 	"time"
 
-	isatty "github.com/mattn/go-isatty"
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 
 	etcd "github.com/coreos/etcd/clientv3"
 	humanize "github.com/dustin/go-humanize"
-	"github.com/fatih/color"
 	"github.com/minio/minio/cmd/crypto"
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/certs"
 	"github.com/minio/minio/pkg/dns"
+	"github.com/minio/minio/pkg/iam/openid"
 	iampolicy "github.com/minio/minio/pkg/iam/policy"
-	"github.com/minio/minio/pkg/iam/validator"
+	"github.com/minio/minio/pkg/pubsub"
 )
 
 // minio configuration related constants.
@@ -57,6 +55,7 @@ const (
 	globalMinioDefaultStorageClass = "STANDARD"
 	globalWindowsOSName            = "windows"
 	globalNetBSDOSName             = "netbsd"
+	globalMacOSName                = "darwin"
 	globalMinioModeFS              = "mode-server-fs"
 	globalMinioModeXL              = "mode-server-xl"
 	globalMinioModeDistXL          = "mode-server-distributed-xl"
@@ -82,8 +81,11 @@ const (
 	// GlobalMultipartCleanupInterval - Cleanup interval when the stale multipart cleanup is initiated.
 	GlobalMultipartCleanupInterval = time.Hour * 24 // 24 hrs.
 
-	// Refresh interval to update in-memory bucket policy cache.
-	globalRefreshBucketPolicyInterval = 5 * time.Minute
+	// GlobalServiceExecutionInterval - Executes the Lifecycle events.
+	GlobalServiceExecutionInterval = time.Hour * 24 // 24 hrs.
+
+	// Refresh interval to update in-memory bucket lifecycle cache.
+	globalRefreshBucketLifecycleInterval = 5 * time.Minute
 	// Refresh interval to update in-memory iam config cache.
 	globalRefreshIAMInterval = 5 * time.Minute
 
@@ -92,9 +94,10 @@ const (
 )
 
 var globalCLIContext = struct {
-	JSON, Quiet bool
-	Anonymous   bool
-	Addr        string
+	JSON, Quiet    bool
+	Anonymous      bool
+	Addr           string
+	StrictS3Compat bool
 }{}
 
 var (
@@ -109,6 +112,12 @@ var (
 
 	// Indicates if the running minio server is an erasure-code backend.
 	globalIsXL = false
+
+	// Indicates if the running minio is in gateway mode.
+	globalIsGateway = false
+
+	// Name of gateway server, e.g S3, GCS, Azure, etc
+	globalGatewayName = ""
 
 	// This flag is set to 'true' by default
 	globalIsBrowserEnabled = true
@@ -131,9 +140,9 @@ var (
 	// Maximum size of internal objects parts
 	globalPutPartSize = int64(64 * 1024 * 1024)
 
-	// Minio local server address (in `host:port` format)
+	// MinIO local server address (in `host:port` format)
 	globalMinioAddr = ""
-	// Minio default port, can be changed through command line.
+	// MinIO default port, can be changed through command line.
 	globalMinioPort = globalMinioDefaultPort
 	// Holds the host that was passed using --address
 	globalMinioHost = ""
@@ -144,6 +153,8 @@ var (
 	globalNotificationSys *NotificationSys
 	globalPolicySys       *PolicySys
 	globalIAMSys          *IAMSys
+
+	globalLifecycleSys *LifecycleSys
 
 	// CA root certificates, a nil value means system certs pool will be used
 	globalRootCAs *x509.CertPool
@@ -157,8 +168,13 @@ var (
 	globalHTTPServerErrorCh = make(chan error)
 	globalOSSignalCh        = make(chan os.Signal, 1)
 
-	// File to log HTTP request/response headers and body.
-	globalHTTPTraceFile *os.File
+	// global Trace system to send HTTP request/response logs to
+	// registered listeners
+	globalHTTPTrace = pubsub.New()
+
+	// global console system to send console logs to
+	// registered listeners
+	globalConsoleSys *HTTPConsoleLoggerSys
 
 	globalEndpoints EndpointList
 
@@ -175,7 +191,7 @@ var (
 	globalPublicCerts []*x509.Certificate
 
 	globalDomainNames []string      // Root domains for virtual host style requests
-	globalDomainIPs   set.StringSet // Root domain IP address(s) for a distributed Minio deployment
+	globalDomainIPs   set.StringSet // Root domain IP address(s) for a distributed MinIO deployment
 
 	globalListingTimeout   = newDynamicTimeout( /*30*/ 600*time.Second /*5*/, 600*time.Second) // timeout for listing related ops
 	globalObjectTimeout    = newDynamicTimeout( /*1*/ 10*time.Minute /*10*/, 600*time.Second)  // timeout for Object API related ops
@@ -207,14 +223,10 @@ var (
 	globalCacheExpiry = 90
 	// Max allowed disk cache percentage
 	globalCacheMaxUse = 80
-
-	// RPC V1 - Initial version
-	// RPC V2 - format.json XL version changed to 2
-	// RPC V3 - format.json XL version changed to 3
-	// RPC V4 - ReadFile() arguments signature changed
-	// Current RPC version
-	globalRPCAPIVersion = RPCVersion{4, 0, 0}
-
+	// Disk cache KMS Key
+	globalCacheKMSKeyID string
+	// Initialized KMS configuration for disk cache
+	globalCacheKMS crypto.KMS
 	// Allocated etcd endpoint for config and bucket DNS.
 	globalEtcdClient *etcd.Client
 
@@ -237,24 +249,24 @@ var (
 	// configuration must be present.
 	globalAutoEncryption bool
 
-	// Is compression include extensions/content-types set.
+	// Is compression include extensions/content-types set?
 	globalIsEnvCompression bool
 
-	// Is compression enabeld.
+	// Is compression enabled?
 	globalIsCompressionEnabled = false
 
 	// Include-list for compression.
-	globalCompressExtensions = []string{".txt", ".log", ".csv", ".json"}
-	globalCompressMimeTypes  = []string{"text/csv", "text/plain", "application/json"}
+	globalCompressExtensions = []string{".txt", ".log", ".csv", ".json", ".tar", ".xml", ".bin"}
+	globalCompressMimeTypes  = []string{"text/*", "application/json", "application/xml"}
 
 	// Some standard object extensions which we strictly dis-allow for compression.
-	standardExcludeCompressExtensions = []string{".gz", ".bz2", ".rar", ".zip", ".7z"}
+	standardExcludeCompressExtensions = []string{".gz", ".bz2", ".rar", ".zip", ".7z", ".xz", ".mp4", ".mkv", ".mov"}
 
 	// Some standard content-types which we strictly dis-allow for compression.
 	standardExcludeCompressContentTypes = []string{"video/*", "audio/*", "application/zip", "application/x-gzip", "application/x-zip-compressed", " application/x-compress", "application/x-spoon"}
 
 	// Authorization validators list.
-	globalIAMValidators *validator.Validators
+	globalOpenIDValidators *openid.Validators
 
 	// OPA policy system.
 	globalPolicyOPA *iampolicy.Opa
@@ -265,77 +277,12 @@ var (
 	// GlobalGatewaySSE sse options
 	GlobalGatewaySSE gatewaySSE
 
+	// The always present healing routine ready to heal objects
+	globalBackgroundHealing *healRoutine
+	globalAllHealState      *allHealState
+	globalSweepHealState    *allHealState
+
 	// Add new variable global values here.
-)
-
-// global colors.
-var (
-	// Check if we stderr, stdout are dumb terminals, we do not apply
-	// ansi coloring on dumb terminals.
-	isTerminal = func() bool {
-		return isatty.IsTerminal(os.Stdout.Fd()) && isatty.IsTerminal(os.Stderr.Fd())
-	}
-
-	colorBold = func() func(a ...interface{}) string {
-		if isTerminal() {
-			return color.New(color.Bold).SprintFunc()
-		}
-		return fmt.Sprint
-	}()
-	colorRed = func() func(format string, a ...interface{}) string {
-		if isTerminal() {
-			return color.New(color.FgRed).SprintfFunc()
-		}
-		return fmt.Sprintf
-	}()
-	colorBlue = func() func(format string, a ...interface{}) string {
-		if isTerminal() {
-			return color.New(color.FgBlue).SprintfFunc()
-		}
-		return fmt.Sprintf
-	}()
-	colorYellow = func() func(format string, a ...interface{}) string {
-		if isTerminal() {
-			return color.New(color.FgYellow).SprintfFunc()
-		}
-		return fmt.Sprintf
-	}()
-	colorCyanBold = func() func(a ...interface{}) string {
-		if isTerminal() {
-			color.New(color.FgCyan, color.Bold).SprintFunc()
-		}
-		return fmt.Sprint
-	}()
-	colorYellowBold = func() func(format string, a ...interface{}) string {
-		if isTerminal() {
-			return color.New(color.FgYellow, color.Bold).SprintfFunc()
-		}
-		return fmt.Sprintf
-	}()
-	colorBgYellow = func() func(format string, a ...interface{}) string {
-		if isTerminal() {
-			return color.New(color.BgYellow).SprintfFunc()
-		}
-		return fmt.Sprintf
-	}()
-	colorBlack = func() func(format string, a ...interface{}) string {
-		if isTerminal() {
-			return color.New(color.FgBlack).SprintfFunc()
-		}
-		return fmt.Sprintf
-	}()
-	colorGreenBold = func() func(format string, a ...interface{}) string {
-		if isTerminal() {
-			return color.New(color.FgGreen, color.Bold).SprintfFunc()
-		}
-		return fmt.Sprintf
-	}()
-	colorRedBold = func() func(format string, a ...interface{}) string {
-		if isTerminal() {
-			return color.New(color.FgRed, color.Bold).SprintfFunc()
-		}
-		return fmt.Sprintf
-	}()
 )
 
 // Returns minio global information, as a key value map.

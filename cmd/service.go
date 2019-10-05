@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,12 +23,11 @@ import (
 )
 
 // Type of service signals currently supported.
-type serviceSignal string
+type serviceSignal int
 
 const (
-	serviceStatus  serviceSignal = "serviceStatus"  // Gets status about the service.
-	serviceRestart               = "serviceRestart" // Restarts the service.
-	serviceStop                  = "serviceStop"    // Stops the server.
+	serviceRestart serviceSignal = iota // Restarts the server.
+	serviceStop                         // Stops the server.
 	// Add new service requests here.
 )
 

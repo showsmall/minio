@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import (
 // getDiskUsage walks the file tree rooted at root, calling usageFn
 // for each file or directory in the tree, including root.
 func getDiskUsage(ctx context.Context, root string, usageFn usageFunc) error {
-	return walk(ctx, root+slashSeparator, usageFn)
+	return walk(ctx, root+SlashSeparator, usageFn)
 }
 
 type usageFunc func(ctx context.Context, entry string) error
@@ -34,7 +34,7 @@ func walk(ctx context.Context, path string, usageFn usageFunc) error {
 		return err
 	}
 
-	if !hasSuffix(path, slashSeparator) {
+	if !hasSuffix(path, SlashSeparator) {
 		return nil
 	}
 

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 )
 
 // ValidateFilterRuleValue - checks if given value is filter rule value or not.
@@ -222,6 +222,10 @@ func (conf *Config) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	if len(parsedConfig.QueueList) > 0 {
 		for i, q1 := range parsedConfig.QueueList[:len(parsedConfig.QueueList)-1] {
 			for _, q2 := range parsedConfig.QueueList[i+1:] {
+				// Removes the region from ARN if server region is not set
+				if q2.ARN.region != "" && q1.ARN.region == "" {
+					q2.ARN.region = ""
+				}
 				if reflect.DeepEqual(q1, q2) {
 					return &ErrDuplicateQueueConfiguration{q1}
 				}
@@ -272,15 +276,20 @@ func (conf *Config) ToRulesMap() RulesMap {
 // ParseConfig - parses data in reader to notification configuration.
 func ParseConfig(reader io.Reader, region string, targetList *TargetList) (*Config, error) {
 	var config Config
-	if err := xml.NewDecoder(reader).Decode(&config); err != nil {
+	var err error
+
+	if err = xml.NewDecoder(reader).Decode(&config); err != nil {
 		return nil, err
 	}
 
-	if err := config.Validate(region, targetList); err != nil {
-		return nil, err
-	}
+	err = config.Validate(region, targetList)
 
 	config.SetRegion(region)
 
-	return &config, nil
+	// If xml namespace is empty, set a default value before returning.
+	if config.XMLNS == "" {
+		config.XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
+	}
+
+	return &config, err
 }

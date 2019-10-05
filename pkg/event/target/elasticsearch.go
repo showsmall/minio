@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,23 +18,27 @@ package target
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/minio/minio/pkg/event"
 	xnet "github.com/minio/minio/pkg/net"
+	"github.com/pkg/errors"
 
 	"gopkg.in/olivere/elastic.v5"
 )
 
 // ElasticsearchArgs - Elasticsearch target arguments.
 type ElasticsearchArgs struct {
-	Enable bool     `json:"enable"`
-	Format string   `json:"format"`
-	URL    xnet.URL `json:"url"`
-	Index  string   `json:"index"`
+	Enable     bool     `json:"enable"`
+	Format     string   `json:"format"`
+	URL        xnet.URL `json:"url"`
+	Index      string   `json:"index"`
+	QueueDir   string   `json:"queueDir"`
+	QueueLimit uint64   `json:"queueLimit"`
 }
 
 // Validate ElasticsearchArgs fields
@@ -54,6 +58,9 @@ func (a ElasticsearchArgs) Validate() error {
 	if a.Index == "" {
 		return errors.New("empty index value")
 	}
+	if a.QueueLimit > 10000 {
+		return errors.New("queueLimit should not exceed 10000")
+	}
 	return nil
 }
 
@@ -62,6 +69,7 @@ type ElasticsearchTarget struct {
 	id     event.TargetID
 	args   ElasticsearchArgs
 	client *elastic.Client
+	store  Store
 }
 
 // ID - returns target ID.
@@ -69,12 +77,34 @@ func (target *ElasticsearchTarget) ID() event.TargetID {
 	return target.id
 }
 
-// Send - sends event to Elasticsearch.
-func (target *ElasticsearchTarget) Send(eventData event.Event) error {
+// Save - saves the events to the store if queuestore is configured, which will be replayed when the elasticsearch connection is active.
+func (target *ElasticsearchTarget) Save(eventData event.Event) error {
+	if target.store != nil {
+		return target.store.Put(eventData)
+	}
+	if dErr := target.args.URL.DialHTTP(); dErr != nil {
+		if xnet.IsNetworkOrHostDown(dErr) {
+			return errNotConnected
+		}
+		return dErr
+	}
+	return target.send(eventData)
+}
+
+// send - sends the event to the target.
+func (target *ElasticsearchTarget) send(eventData event.Event) error {
+
 	var key string
 
+	exists := func() (bool, error) {
+		return target.client.Exists().Index(target.args.Index).Type("event").Id(key).Do(context.Background())
+	}
+
 	remove := func() error {
-		_, err := target.client.Delete().Index(target.args.Index).Type("event").Id(key).Do(context.Background())
+		exists, err := exists()
+		if err == nil && exists {
+			_, err = target.client.Delete().Index(target.args.Index).Type("event").Id(key).Do(context.Background())
+		}
 		return err
 	}
 
@@ -111,37 +141,125 @@ func (target *ElasticsearchTarget) Send(eventData event.Event) error {
 	return nil
 }
 
+// Send - reads an event from store and sends it to Elasticsearch.
+func (target *ElasticsearchTarget) Send(eventKey string) error {
+
+	var err error
+
+	if target.client == nil {
+		target.client, err = newClient(target.args)
+		if err != nil {
+			return err
+		}
+	}
+
+	if dErr := target.args.URL.DialHTTP(); dErr != nil {
+		if xnet.IsNetworkOrHostDown(dErr) {
+			return errNotConnected
+		}
+		return dErr
+	}
+
+	eventData, eErr := target.store.Get(eventKey)
+	if eErr != nil {
+		// The last event key in a successful batch will be sent in the channel atmost once by the replayEvents()
+		// Such events will not exist and wouldve been already been sent successfully.
+		if os.IsNotExist(eErr) {
+			return nil
+		}
+		return eErr
+	}
+
+	if err := target.send(eventData); err != nil {
+		if xnet.IsNetworkOrHostDown(err) {
+			return errNotConnected
+		}
+		return err
+	}
+
+	// Delete the event from store.
+	return target.store.Del(eventKey)
+}
+
 // Close - does nothing and available for interface compatibility.
 func (target *ElasticsearchTarget) Close() error {
 	return nil
 }
 
-// NewElasticsearchTarget - creates new Elasticsearch target.
-func NewElasticsearchTarget(id string, args ElasticsearchArgs) (*ElasticsearchTarget, error) {
-	client, err := elastic.NewClient(elastic.SetURL(args.URL.String()), elastic.SetSniff(false), elastic.SetMaxRetries(10))
-	if err != nil {
-		return nil, err
-	}
-
+// createIndex - creates the index if it does not exist.
+func createIndex(client *elastic.Client, args ElasticsearchArgs) error {
 	exists, err := client.IndexExists(args.Index).Do(context.Background())
 	if err != nil {
-		return nil, err
+		return err
 	}
-
 	if !exists {
 		var createIndex *elastic.IndicesCreateResult
 		if createIndex, err = client.CreateIndex(args.Index).Do(context.Background()); err != nil {
-			return nil, err
+			return err
 		}
 
 		if !createIndex.Acknowledged {
-			return nil, fmt.Errorf("index %v not created", args.Index)
+			return fmt.Errorf("index %v not created", args.Index)
+		}
+	}
+	return nil
+}
+
+// newClient - creates a new elastic client with args provided.
+func newClient(args ElasticsearchArgs) (*elastic.Client, error) {
+	client, clientErr := elastic.NewClient(elastic.SetURL(args.URL.String()), elastic.SetSniff(false), elastic.SetMaxRetries(10))
+	if clientErr != nil {
+		if !(errors.Cause(clientErr) == elastic.ErrNoClient) {
+			return nil, clientErr
+		}
+	} else {
+		if err := createIndex(client, args); err != nil {
+			return nil, err
+		}
+	}
+	return client, nil
+}
+
+// NewElasticsearchTarget - creates new Elasticsearch target.
+func NewElasticsearchTarget(id string, args ElasticsearchArgs, doneCh <-chan struct{}) (*ElasticsearchTarget, error) {
+	var client *elastic.Client
+	var err error
+
+	var store Store
+
+	if args.QueueDir != "" {
+		queueDir := filepath.Join(args.QueueDir, storePrefix+"-elasticsearch-"+id)
+		store = NewQueueStore(queueDir, args.QueueLimit)
+		if oErr := store.Open(); oErr != nil {
+			return nil, oErr
 		}
 	}
 
-	return &ElasticsearchTarget{
+	dErr := args.URL.DialHTTP()
+	if dErr != nil {
+		if store == nil {
+			return nil, dErr
+		}
+	} else {
+		client, err = newClient(args)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	target := &ElasticsearchTarget{
 		id:     event.TargetID{ID: id, Name: "elasticsearch"},
 		args:   args,
 		client: client,
-	}, nil
+		store:  store,
+	}
+
+	if target.store != nil {
+		// Replays the events from the store.
+		eventKeyCh := replayEvents(target.store, doneCh)
+		// Start replaying events from the store.
+		go sendEvents(target, eventKeyCh, doneCh)
+	}
+
+	return target, nil
 }

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015-2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015-2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	jwtgo "github.com/dgrijalva/jwt-go"
+	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/hash"
@@ -38,41 +39,41 @@ import (
 
 // Verify if request has JWT.
 func isRequestJWT(r *http.Request) bool {
-	return strings.HasPrefix(r.Header.Get("Authorization"), jwtAlgorithm)
+	return strings.HasPrefix(r.Header.Get(xhttp.Authorization), jwtAlgorithm)
 }
 
 // Verify if request has AWS Signature Version '4'.
 func isRequestSignatureV4(r *http.Request) bool {
-	return strings.HasPrefix(r.Header.Get("Authorization"), signV4Algorithm)
+	return strings.HasPrefix(r.Header.Get(xhttp.Authorization), signV4Algorithm)
 }
 
 // Verify if request has AWS Signature Version '2'.
 func isRequestSignatureV2(r *http.Request) bool {
-	return (!strings.HasPrefix(r.Header.Get("Authorization"), signV4Algorithm) &&
-		strings.HasPrefix(r.Header.Get("Authorization"), signV2Algorithm))
+	return (!strings.HasPrefix(r.Header.Get(xhttp.Authorization), signV4Algorithm) &&
+		strings.HasPrefix(r.Header.Get(xhttp.Authorization), signV2Algorithm))
 }
 
 // Verify if request has AWS PreSign Version '4'.
 func isRequestPresignedSignatureV4(r *http.Request) bool {
-	_, ok := r.URL.Query()["X-Amz-Credential"]
+	_, ok := r.URL.Query()[xhttp.AmzCredential]
 	return ok
 }
 
 // Verify request has AWS PreSign Version '2'.
 func isRequestPresignedSignatureV2(r *http.Request) bool {
-	_, ok := r.URL.Query()["AWSAccessKeyId"]
+	_, ok := r.URL.Query()[xhttp.AmzAccessKeyID]
 	return ok
 }
 
 // Verify if request has AWS Post policy Signature Version '4'.
 func isRequestPostPolicySignatureV4(r *http.Request) bool {
-	return strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") &&
+	return strings.Contains(r.Header.Get(xhttp.ContentType), "multipart/form-data") &&
 		r.Method == http.MethodPost
 }
 
 // Verify if the request has AWS Streaming Signature Version '4'. This is only valid for 'PUT' operation.
 func isRequestSignStreamingV4(r *http.Request) bool {
-	return r.Header.Get("x-amz-content-sha256") == streamingContentSHA256 &&
+	return r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256 &&
 		r.Method == http.MethodPut
 }
 
@@ -109,9 +110,9 @@ func getRequestAuthType(r *http.Request) authType {
 		return authTypeJWT
 	} else if isRequestPostPolicySignatureV4(r) {
 		return authTypePostPolicy
-	} else if _, ok := r.URL.Query()["Action"]; ok {
+	} else if _, ok := r.URL.Query()[xhttp.Action]; ok {
 		return authTypeSTS
-	} else if _, ok := r.Header["Authorization"]; !ok {
+	} else if _, ok := r.Header[xhttp.Authorization]; !ok {
 		return authTypeAnonymous
 	}
 	return authTypeUnknown
@@ -121,7 +122,7 @@ func getRequestAuthType(r *http.Request) authType {
 // It does not accept presigned or JWT or anonymous requests.
 func checkAdminRequestAuthType(ctx context.Context, r *http.Request, region string) APIErrorCode {
 	s3Err := ErrAccessDenied
-	if _, ok := r.Header["X-Amz-Content-Sha256"]; ok &&
+	if _, ok := r.Header[xhttp.AmzContentSha256]; ok &&
 		getRequestAuthType(r) == authTypeSigned && !skipContentSha256Cksum(r) {
 		// We only support admin credentials to access admin APIs.
 
@@ -148,11 +149,11 @@ func checkAdminRequestAuthType(ctx context.Context, r *http.Request, region stri
 
 // Fetch the security token set by the client.
 func getSessionToken(r *http.Request) (token string) {
-	token = r.Header.Get("X-Amz-Security-Token")
+	token = r.Header.Get(xhttp.AmzSecurityToken)
 	if token != "" {
 		return token
 	}
-	return r.URL.Query().Get("X-Amz-Security-Token")
+	return r.URL.Query().Get(xhttp.AmzSecurityToken)
 }
 
 // Fetch claims in the security token returned by the client, doesn't return
@@ -200,6 +201,45 @@ func getClaimsFromToken(r *http.Request) (map[string]interface{}, error) {
 	if _, ok = v.(string); !ok {
 		return nil, errInvalidAccessKeyID
 	}
+
+	if globalPolicyOPA == nil {
+		// If OPA is not set and if ldap claim key is set,
+		// allow the claim.
+		if _, ok := claims[ldapUser]; ok {
+			return claims, nil
+		}
+
+		// If OPA is not set, session token should
+		// have a policy and its mandatory, reject
+		// requests without policy claim.
+		p, pok := claims[iampolicy.PolicyName]
+		if !pok {
+			return nil, errAuthentication
+		}
+		if _, pok = p.(string); !pok {
+			return nil, errAuthentication
+		}
+		sp, spok := claims[iampolicy.SessionPolicyName]
+		// Sub policy is optional, if not set return success.
+		if !spok {
+			return claims, nil
+		}
+		// Sub policy is set but its not a string, reject such requests
+		spStr, spok := sp.(string)
+		if !spok {
+			return nil, errAuthentication
+		}
+		// Looks like subpolicy is set and is a string, if set then its
+		// base64 encoded, decode it. Decoding fails reject such requests.
+		spBytes, err := base64.StdEncoding.DecodeString(spStr)
+		if err != nil {
+			// Base64 decoding fails, we should log to indicate
+			// something is malforming the request sent by client.
+			logger.LogIf(context.Background(), err)
+			return nil, errAuthentication
+		}
+		claims[iampolicy.SessionPolicyName] = string(spBytes)
+	}
 	return claims, nil
 }
 
@@ -225,14 +265,24 @@ func checkClaimsFromToken(r *http.Request, cred auth.Credentials) (map[string]in
 //   for authenticated requests validates IAM policies.
 // returns APIErrorCode if any to be replied to the client.
 func checkRequestAuthType(ctx context.Context, r *http.Request, action policy.Action, bucketName, objectName string) (s3Err APIErrorCode) {
+	_, _, s3Err = checkRequestAuthTypeToAccessKey(ctx, r, action, bucketName, objectName)
+	return s3Err
+}
+
+// Check request auth type verifies the incoming http request
+// - validates the request signature
+// - validates the policy action if anonymous tests bucket policies if any,
+//   for authenticated requests validates IAM policies.
+// returns APIErrorCode if any to be replied to the client.
+// Additionally returns the accessKey used in the request, and if this request is by an admin.
+func checkRequestAuthTypeToAccessKey(ctx context.Context, r *http.Request, action policy.Action, bucketName, objectName string) (accessKey string, owner bool, s3Err APIErrorCode) {
 	var cred auth.Credentials
-	var owner bool
 	switch getRequestAuthType(r) {
 	case authTypeUnknown, authTypeStreamingSigned:
-		return ErrAccessDenied
+		return accessKey, owner, ErrAccessDenied
 	case authTypePresignedV2, authTypeSignedV2:
 		if s3Err = isReqAuthenticatedV2(r); s3Err != ErrNone {
-			return s3Err
+			return accessKey, owner, s3Err
 		}
 		cred, owner, s3Err = getReqAccessKeyV2(r)
 	case authTypeSigned, authTypePresigned:
@@ -242,17 +292,18 @@ func checkRequestAuthType(ctx context.Context, r *http.Request, action policy.Ac
 			region = ""
 		}
 		if s3Err = isReqAuthenticated(ctx, r, region, serviceS3); s3Err != ErrNone {
-			return s3Err
+			return accessKey, owner, s3Err
 		}
 		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3)
 	}
 	if s3Err != ErrNone {
-		return s3Err
+		return accessKey, owner, s3Err
 	}
 
-	claims, s3Err := checkClaimsFromToken(r, cred)
+	var claims map[string]interface{}
+	claims, s3Err = checkClaimsFromToken(r, cred)
 	if s3Err != ErrNone {
-		return s3Err
+		return accessKey, owner, s3Err
 	}
 
 	// LocationConstraint is valid only for CreateBucketAction.
@@ -262,7 +313,7 @@ func checkRequestAuthType(ctx context.Context, r *http.Request, action policy.Ac
 		payload, err := ioutil.ReadAll(io.LimitReader(r.Body, maxLocationConstraintSize))
 		if err != nil {
 			logger.LogIf(ctx, err)
-			return ErrMalformedXML
+			return accessKey, owner, ErrMalformedXML
 		}
 
 		// Populate payload to extract location constraint.
@@ -271,7 +322,7 @@ func checkRequestAuthType(ctx context.Context, r *http.Request, action policy.Ac
 		var s3Error APIErrorCode
 		locationConstraint, s3Error = parseLocationConstraint(r)
 		if s3Error != ErrNone {
-			return s3Error
+			return accessKey, owner, s3Error
 		}
 
 		// Populate payload again to handle it in HTTP handler.
@@ -287,9 +338,10 @@ func checkRequestAuthType(ctx context.Context, r *http.Request, action policy.Ac
 			IsOwner:         false,
 			ObjectName:      objectName,
 		}) {
-			return ErrNone
+			// Request is allowed return the appropriate access key.
+			return cred.AccessKey, owner, ErrNone
 		}
-		return ErrAccessDenied
+		return accessKey, owner, ErrAccessDenied
 	}
 
 	if globalIAMSys.IsAllowed(iampolicy.Args{
@@ -301,9 +353,10 @@ func checkRequestAuthType(ctx context.Context, r *http.Request, action policy.Ac
 		IsOwner:         owner,
 		Claims:          claims,
 	}) {
-		return ErrNone
+		// Request is allowed return the appropriate access key.
+		return cred.AccessKey, owner, ErrNone
 	}
-	return ErrAccessDenied
+	return accessKey, owner, ErrAccessDenied
 }
 
 // Verify if request has valid AWS Signature Version '2'.
@@ -337,8 +390,8 @@ func isReqAuthenticated(ctx context.Context, r *http.Request, region string, sty
 		contentMD5, contentSHA256 []byte
 	)
 	// Extract 'Content-Md5' if present.
-	if _, ok := r.Header["Content-Md5"]; ok {
-		contentMD5, err = base64.StdEncoding.Strict().DecodeString(r.Header.Get("Content-Md5"))
+	if _, ok := r.Header[xhttp.ContentMD5]; ok {
+		contentMD5, err = base64.StdEncoding.Strict().DecodeString(r.Header.Get(xhttp.ContentMD5))
 		if err != nil || len(contentMD5) == 0 {
 			return ErrInvalidDigest
 		}
@@ -347,14 +400,14 @@ func isReqAuthenticated(ctx context.Context, r *http.Request, region string, sty
 	// Extract either 'X-Amz-Content-Sha256' header or 'X-Amz-Content-Sha256' query parameter (if V4 presigned)
 	// Do not verify 'X-Amz-Content-Sha256' if skipSHA256.
 	if skipSHA256 := skipContentSha256Cksum(r); !skipSHA256 && isRequestPresignedSignatureV4(r) {
-		if sha256Sum, ok := r.URL.Query()["X-Amz-Content-Sha256"]; ok && len(sha256Sum) > 0 {
+		if sha256Sum, ok := r.URL.Query()[xhttp.AmzContentSha256]; ok && len(sha256Sum) > 0 {
 			contentSHA256, err = hex.DecodeString(sha256Sum[0])
 			if err != nil {
 				return ErrContentSHA256Mismatch
 			}
 		}
-	} else if _, ok := r.Header["X-Amz-Content-Sha256"]; !skipSHA256 && ok {
-		contentSHA256, err = hex.DecodeString(r.Header.Get("X-Amz-Content-Sha256"))
+	} else if _, ok := r.Header[xhttp.AmzContentSha256]; !skipSHA256 && ok {
+		contentSHA256, err = hex.DecodeString(r.Header.Get(xhttp.AmzContentSha256))
 		if err != nil || len(contentSHA256) == 0 {
 			return ErrContentSHA256Mismatch
 		}
@@ -362,7 +415,8 @@ func isReqAuthenticated(ctx context.Context, r *http.Request, region string, sty
 
 	// Verify 'Content-Md5' and/or 'X-Amz-Content-Sha256' if present.
 	// The verification happens implicit during reading.
-	reader, err := hash.NewReader(r.Body, -1, hex.EncodeToString(contentMD5), hex.EncodeToString(contentSHA256), -1)
+	reader, err := hash.NewReader(r.Body, -1, hex.EncodeToString(contentMD5),
+		hex.EncodeToString(contentSHA256), -1, globalCLIContext.StrictS3Compat)
 	if err != nil {
 		return toAPIErrorCode(ctx, err)
 	}

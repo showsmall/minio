@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ const (
 	ListBucketMultipartUploadsAction = "s3:ListBucketMultipartUploads"
 
 	// ListenBucketNotificationAction - ListenBucketNotification Rest API action.
-	// This is Minio extension.
+	// This is MinIO extension.
 	ListenBucketNotificationAction = "s3:ListenBucketNotification"
 
 	// ListMultipartUploadPartsAction - ListParts Rest API action.
@@ -83,6 +83,12 @@ const (
 
 	// PutObjectAction - PutObject Rest API action.
 	PutObjectAction = "s3:PutObject"
+
+	// PutBucketLifecycleAction - PutBucketLifecycle Rest API action.
+	PutBucketLifecycleAction = "s3:PutBucketLifecycle"
+
+	// GetBucketLifecycleAction - GetBucketLifecycle Rest API action.
+	GetBucketLifecycleAction = "s3:GetBucketLifecycle"
 )
 
 // isObjectAction - returns whether action is object type or not.
@@ -113,6 +119,8 @@ func (action Action) IsValid() bool {
 	case ListMultipartUploadPartsAction, PutBucketNotificationAction:
 		fallthrough
 	case PutBucketPolicyAction, PutObjectAction:
+		fallthrough
+	case PutBucketLifecycleAction, GetBucketLifecycleAction:
 		return true
 	}
 

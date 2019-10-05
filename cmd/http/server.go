@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,9 +25,8 @@ import (
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
-	"golang.org/x/net/http2"
 
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 	"github.com/minio/minio/pkg/certs"
 )
 
@@ -40,25 +39,14 @@ const (
 	// DefaultTCPKeepAliveTimeout - default TCP keep alive timeout for accepted connection.
 	DefaultTCPKeepAliveTimeout = 30 * time.Second
 
-	// DefaultReadTimeout - default timout to read data from accepted connection.
-	DefaultReadTimeout = 5 * time.Minute
-
-	// DefaultWriteTimeout - default timout to write data to accepted connection.
-	DefaultWriteTimeout = 5 * time.Minute
-
 	// DefaultMaxHeaderBytes - default maximum HTTP header size in bytes.
 	DefaultMaxHeaderBytes = 1 * humanize.MiByte
-
-	// DefaultHTTP2MaxConcurrentStreams - default value for HTTP 2.0 maximum concurrent streams allowed.
-	DefaultHTTP2MaxConcurrentStreams = 1024
 )
 
 // Server - extended http.Server supports multiple addresses to serve and enhanced connection handling.
 type Server struct {
 	http.Server
 	Addrs                  []string      // addresses on which the server listens for new connection.
-	ReadTimeout            time.Duration // timeout used for net.Conn.Read() deadlines.
-	WriteTimeout           time.Duration // timeout used for net.Conn.Write() deadlines.
 	ShutdownTimeout        time.Duration // timeout used for graceful server shutdown.
 	TCPKeepAliveTimeout    time.Duration // timeout used for underneath TCP connection.
 	UpdateBytesReadFunc    func(int)     // function to be called to update bytes read in bufConn.
@@ -81,8 +69,6 @@ func (srv *Server) Start() (err error) {
 	if srv.TLSConfig != nil {
 		tlsConfig = srv.TLSConfig.Clone()
 	}
-	readTimeout := srv.ReadTimeout
-	writeTimeout := srv.WriteTimeout
 	handler := srv.Handler // if srv.Handler holds non-synced state -> possible data race
 
 	addrs := set.CreateStringSet(srv.Addrs...).ToSlice() // copy and remove duplicates
@@ -93,8 +79,6 @@ func (srv *Server) Start() (err error) {
 	listener, err = newHTTPListener(
 		addrs,
 		tcpKeepAliveTimeout,
-		readTimeout,
-		writeTimeout,
 		srv.UpdateBytesReadFunc,
 		srv.UpdateBytesWrittenFunc,
 	)
@@ -125,11 +109,6 @@ func (srv *Server) Start() (err error) {
 
 	// Start servicing with listener.
 	if tlsConfig != nil {
-		if err = http2.ConfigureServer(&srv.Server, &http2.Server{
-			MaxConcurrentStreams: DefaultHTTP2MaxConcurrentStreams,
-		}); err != nil {
-			return err
-		}
 		return srv.Server.Serve(tls.NewListener(listener, tlsConfig))
 	}
 	return srv.Server.Serve(listener)
@@ -203,7 +182,14 @@ func NewServer(addrs []string, handler http.Handler, getCert certs.GetCertificat
 			CipherSuites:             defaultCipherSuites,
 			CurvePreferences:         secureCurves,
 			MinVersion:               tls.VersionTLS12,
-			NextProtos:               []string{"h2", "http/1.1"},
+			// Do not edit the next line, protos priority is kept
+			// on purpose in this manner for HTTP 2.0, we would
+			// still like HTTP 2.0 clients to negotiate connection
+			// to server if needed but by default HTTP 1.1 is
+			// expected. We need to change this in future
+			// when we wish to go back to HTTP 2.0 as default
+			// priority for HTTP protocol negotiation.
+			NextProtos: []string{"http/1.1", "h2"},
 		}
 		tlsConfig.GetCertificate = getCert
 	}
@@ -215,8 +201,6 @@ func NewServer(addrs []string, handler http.Handler, getCert certs.GetCertificat
 	}
 	httpServer.Handler = handler
 	httpServer.TLSConfig = tlsConfig
-	httpServer.ReadTimeout = DefaultReadTimeout
-	httpServer.WriteTimeout = DefaultWriteTimeout
 	httpServer.MaxHeaderBytes = DefaultMaxHeaderBytes
 
 	return httpServer

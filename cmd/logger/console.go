@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import (
 
 	c "github.com/minio/mc/pkg/console"
 	"github.com/minio/minio/cmd/logger/message/log"
+	"github.com/minio/minio/pkg/color"
 )
 
 // Console interface describes the methods that need to be implemented to satisfy the interface requirements.
@@ -89,8 +90,8 @@ func (f fatalMsg) quiet(msg string, args ...interface{}) {
 
 var (
 	logTag      = "ERROR"
-	logBanner   = ColorBgRed(ColorFgWhite(ColorBold(logTag))) + " "
-	emptyBanner = ColorBgRed(strings.Repeat(" ", len(logTag))) + " "
+	logBanner   = color.BgRed(color.FgWhite(color.Bold(logTag))) + " "
+	emptyBanner = color.BgRed(strings.Repeat(" ", len(logTag))) + " "
 	bannerWidth = len(logTag) + 1
 )
 

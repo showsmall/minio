@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -99,10 +99,14 @@ type JSONPathElement struct {
 	ArrayWildcard  bool       `parser:"| @\"[*]\""`            // [*] form
 }
 
-// JSONPath represents a keypath
+// JSONPath represents a keypath.
+// Instances should be treated idempotent and not change once created.
 type JSONPath struct {
 	BaseKey  *Identifier        `parser:" @@"`
 	PathExpr []*JSONPathElement `parser:"(@@)*"`
+
+	// Cached values:
+	pathString string
 }
 
 // AliasedExpression is an expression that can be optionally named

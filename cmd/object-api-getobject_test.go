@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -259,7 +259,7 @@ func testGetObjectPermissionDenied(obj ObjectLayer, instanceType string, disks [
 
 	for i, testCase := range testCases {
 		for _, d := range disks {
-			err = os.Chmod(d+"/"+testCase.bucketName+"/"+testCase.chmodPath, 0)
+			err = os.Chmod(d+SlashSeparator+testCase.bucketName+SlashSeparator+testCase.chmodPath, 0)
 			if err != nil {
 				t.Fatalf("Test %d, Unable to chmod: %v", i+1, err)
 			}

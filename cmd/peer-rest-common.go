@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,19 +16,30 @@
 
 package cmd
 
-const peerRESTVersion = "v1"
+const peerRESTVersion = "v5"
 const peerRESTPath = minioReservedBucketPath + "/peer/" + peerRESTVersion
 
 const (
+	peerRESTMethodNetReadPerfInfo          = "netreadperfinfo"
+	peerRESTMethodCollectNetPerfInfo       = "collectnetperfinfo"
 	peerRESTMethodServerInfo               = "serverinfo"
 	peerRESTMethodCPULoadInfo              = "cpuloadinfo"
 	peerRESTMethodMemUsageInfo             = "memusageinfo"
 	peerRESTMethodDrivePerfInfo            = "driveperfinfo"
 	peerRESTMethodDeleteBucket             = "deletebucket"
+	peerRESTMethodServerUpdate             = "serverupdate"
 	peerRESTMethodSignalService            = "signalservice"
+	peerRESTMethodBackgroundHealStatus     = "backgroundhealstatus"
+	peerRESTMethodBackgroundOpsStatus      = "backgroundopsstatus"
 	peerRESTMethodGetLocks                 = "getlocks"
 	peerRESTMethodBucketPolicyRemove       = "removebucketpolicy"
+	peerRESTMethodLoadUser                 = "loaduser"
+	peerRESTMethodDeleteUser               = "deleteuser"
+	peerRESTMethodLoadPolicy               = "loadpolicy"
+	peerRESTMethodLoadPolicyMapping        = "loadpolicymapping"
+	peerRESTMethodDeletePolicy             = "deletepolicy"
 	peerRESTMethodLoadUsers                = "loadusers"
+	peerRESTMethodLoadGroup                = "loadgroup"
 	peerRESTMethodStartProfiling           = "startprofiling"
 	peerRESTMethodDownloadProfilingData    = "downloadprofilingdata"
 	peerRESTMethodBucketPolicySet          = "setbucketpolicy"
@@ -37,11 +48,29 @@ const (
 	peerRESTMethodReloadFormat             = "reloadformat"
 	peerRESTMethodTargetExists             = "targetexists"
 	peerRESTMethodSendEvent                = "sendevent"
+	peerRESTMethodTrace                    = "trace"
+	peerRESTMethodBucketLifecycleSet       = "setbucketlifecycle"
+	peerRESTMethodBucketLifecycleRemove    = "removebucketlifecycle"
+	peerRESTMethodLog                      = "log"
+	peerRESTMethodHardwareCPUInfo          = "cpuhardwareinfo"
 )
 
 const (
-	peerRESTBucket   = "bucket"
-	peerRESTSignal   = "signal"
-	peerRESTProfiler = "profiler"
-	peerRESTDryRun   = "dry-run"
+	peerRESTNetPerfSize   = "netperfsize"
+	peerRESTDrivePerfSize = "driveperfsize"
+	peerRESTBucket        = "bucket"
+	peerRESTUser          = "user"
+	peerRESTGroup         = "group"
+	peerRESTUserTemp      = "user-temp"
+	peerRESTPolicy        = "policy"
+	peerRESTUserOrGroup   = "user-or-group"
+	peerRESTIsGroup       = "is-group"
+	peerRESTUpdateURL     = "updateURL"
+	peerRESTSha256Hex     = "sha256Hex"
+	peerRESTLatestRelease = "latestReleaseTime"
+	peerRESTSignal        = "signal"
+	peerRESTProfiler      = "profiler"
+	peerRESTDryRun        = "dry-run"
+	peerRESTTraceAll      = "all"
+	peerRESTTraceErr      = "err"
 )

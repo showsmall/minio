@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ func TestGetRequestAuthType(t *testing.T) {
 				URL: &url.URL{
 					Host:   "127.0.0.1:9000",
 					Scheme: httpScheme,
-					Path:   "/",
+					Path:   SlashSeparator,
 				},
 				Header: http.Header{
 					"Authorization":        []string{"AWS4-HMAC-SHA256 <cred_string>"},
@@ -62,7 +62,7 @@ func TestGetRequestAuthType(t *testing.T) {
 				URL: &url.URL{
 					Host:   "127.0.0.1:9000",
 					Scheme: httpScheme,
-					Path:   "/",
+					Path:   SlashSeparator,
 				},
 				Header: http.Header{
 					"Authorization": []string{"Bearer 12313123"},
@@ -77,7 +77,7 @@ func TestGetRequestAuthType(t *testing.T) {
 				URL: &url.URL{
 					Host:   "127.0.0.1:9000",
 					Scheme: httpScheme,
-					Path:   "/",
+					Path:   SlashSeparator,
 				},
 				Header: http.Header{
 					"Authorization": []string{""},
@@ -92,7 +92,7 @@ func TestGetRequestAuthType(t *testing.T) {
 				URL: &url.URL{
 					Host:     "127.0.0.1:9000",
 					Scheme:   httpScheme,
-					Path:     "/",
+					Path:     SlashSeparator,
 					RawQuery: "X-Amz-Credential=EXAMPLEINVALIDEXAMPL%2Fs3%2F20160314%2Fus-east-1",
 				},
 			},
@@ -105,7 +105,7 @@ func TestGetRequestAuthType(t *testing.T) {
 				URL: &url.URL{
 					Host:   "127.0.0.1:9000",
 					Scheme: httpScheme,
-					Path:   "/",
+					Path:   SlashSeparator,
 				},
 				Header: http.Header{
 					"Content-Type": []string{"multipart/form-data"},

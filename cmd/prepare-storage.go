@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@ func formatXLMigrateLocalEndpoints(endpoints EndpointList) error {
 				if os.IsNotExist(err) {
 					return nil
 				}
-				return err
+				return fmt.Errorf("unable to access (%s) %s", formatPath, err)
 			}
 			return formatXLMigrate(epPath)
 		}, index)
@@ -92,11 +92,13 @@ func formatXLCleanupTmpLocalEndpoints(endpoints EndpointList) error {
 				if os.IsNotExist(err) {
 					return nil
 				}
-				return err
+				return fmt.Errorf("unable to access (%s) %s", formatPath, err)
 			}
 			if _, err := os.Stat(pathJoin(epPath, minioMetaTmpBucket+"-old")); err != nil {
 				if !os.IsNotExist(err) {
-					return err
+					return fmt.Errorf("unable to access (%s) %s",
+						pathJoin(epPath, minioMetaTmpBucket+"-old"),
+						err)
 				}
 			}
 
@@ -110,15 +112,24 @@ func formatXLCleanupTmpLocalEndpoints(endpoints EndpointList) error {
 			//
 			// In this example, `33a58b40-aecc-4c9f-a22f-ff17bfa33b62` directory contains
 			// temporary objects from one of the previous runs of minio server.
+			tmpOld := pathJoin(epPath, minioMetaTmpBucket+"-old", mustGetUUID())
 			if err := renameAll(pathJoin(epPath, minioMetaTmpBucket),
-				pathJoin(epPath, minioMetaTmpBucket+"-old", mustGetUUID())); err != nil {
-				return err
+				tmpOld); err != nil && err != errFileNotFound {
+				return fmt.Errorf("unable to rename (%s -> %s) %s",
+					pathJoin(epPath, minioMetaTmpBucket),
+					tmpOld,
+					err)
 			}
 
 			// Removal of tmp-old folder is backgrounded completely.
 			go removeAll(pathJoin(epPath, minioMetaTmpBucket+"-old"))
 
-			return mkdirAll(pathJoin(epPath, minioMetaTmpBucket), 0777)
+			if err := mkdirAll(pathJoin(epPath, minioMetaTmpBucket), 0777); err != nil {
+				return fmt.Errorf("unable to create (%s) %s",
+					pathJoin(epPath, minioMetaTmpBucket),
+					err)
+			}
+			return nil
 		}, index)
 	}
 	for _, err := range g.Wait() {
@@ -161,11 +172,13 @@ var errXLV3ThisEmpty = fmt.Errorf("XL format version 3 has This field empty")
 // time. additionally make sure to close all the disks used in this attempt.
 func connectLoadInitFormats(retryCount int, firstDisk bool, endpoints EndpointList, setCount, drivesPerSet int) (*formatXLV3, error) {
 	// Initialize all storage disks
-	storageDisks, err := initStorageDisks(endpoints)
-	if err != nil {
-		return nil, err
-	}
+	storageDisks, errs := initStorageDisksWithErrors(endpoints)
 	defer closeStorageDisks(storageDisks)
+	for i, err := range errs {
+		if err != nil && err != errDiskNotFound {
+			return nil, fmt.Errorf("Disk %s: %w", endpoints[i], err)
+		}
+	}
 
 	// Attempt to load all `format.json` from all disks.
 	formatConfigs, sErrs := loadFormatXLAll(storageDisks)
@@ -192,7 +205,7 @@ func connectLoadInitFormats(retryCount int, firstDisk bool, endpoints EndpointLi
 	// most part unless one of the formats is not consistent
 	// with expected XL format. For example if a user is
 	// trying to pool FS backend into an XL set.
-	if err = checkFormatXLValues(formatConfigs); err != nil {
+	if err := checkFormatXLValues(formatConfigs); err != nil {
 		return nil, err
 	}
 
@@ -225,7 +238,7 @@ func connectLoadInitFormats(retryCount int, firstDisk bool, endpoints EndpointLi
 	// This migration failed to capture '.This' field properly which indicates
 	// the disk UUID association. Below function is called to handle and fix
 	// this regression, for more info refer https://github.com/minio/minio/issues/5667
-	if err = fixFormatXLV3(storageDisks, endpoints, formatConfigs); err != nil {
+	if err := fixFormatXLV3(storageDisks, endpoints, formatConfigs); err != nil {
 		return nil, err
 	}
 

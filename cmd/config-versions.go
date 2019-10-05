@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,14 @@ package cmd
 import (
 	"sync"
 
+	"github.com/minio/minio/cmd/config/cache"
+	"github.com/minio/minio/cmd/config/compress"
+	xldap "github.com/minio/minio/cmd/config/ldap"
 	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/event/target"
-	"github.com/minio/minio/pkg/iam/policy"
-	"github.com/minio/minio/pkg/iam/validator"
+	"github.com/minio/minio/pkg/iam/openid"
+	iampolicy "github.com/minio/minio/pkg/iam/policy"
 	"github.com/minio/minio/pkg/quick"
 )
 
@@ -592,7 +595,7 @@ type serverConfigV23 struct {
 	StorageClass storageClassConfig `json:"storageclass"`
 
 	// Cache configuration
-	Cache CacheConfig `json:"cache"`
+	Cache cache.Config `json:"cache"`
 
 	// Notification queue configuration.
 	Notify notifierV3 `json:"notify"`
@@ -616,7 +619,7 @@ type serverConfigV24 struct {
 	StorageClass storageClassConfig `json:"storageclass"`
 
 	// Cache configuration
-	Cache CacheConfig `json:"cache"`
+	Cache cache.Config `json:"cache"`
 
 	// Notification queue configuration.
 	Notify notifierV3 `json:"notify"`
@@ -643,14 +646,14 @@ type serverConfigV25 struct {
 	StorageClass storageClassConfig `json:"storageclass"`
 
 	// Cache configuration
-	Cache CacheConfig `json:"cache"`
+	Cache cache.Config `json:"cache"`
 
 	// Notification queue configuration.
 	Notify notifierV3 `json:"notify"`
 }
 
 // serverConfigV26 is just like version '25', stores additionally
-// cache max use value in 'CacheConfig'.
+// cache max use value in 'cache.Config'.
 type serverConfigV26 struct {
 	quick.Config `json:"-"` // ignore interfaces
 
@@ -667,7 +670,7 @@ type serverConfigV26 struct {
 	StorageClass storageClassConfig `json:"storageclass"`
 
 	// Cache configuration
-	Cache CacheConfig `json:"cache"`
+	Cache cache.Config `json:"cache"`
 
 	// Notification queue configuration.
 	Notify notifierV3 `json:"notify"`
@@ -708,7 +711,7 @@ type serverConfigV27 struct {
 	StorageClass storageClassConfig `json:"storageclass"`
 
 	// Cache configuration
-	Cache CacheConfig `json:"cache"`
+	Cache cache.Config `json:"cache"`
 
 	// Notification queue configuration.
 	Notify notifierV3 `json:"notify"`
@@ -736,7 +739,7 @@ type serverConfigV28 struct {
 	StorageClass storageClassConfig `json:"storageclass"`
 
 	// Cache configuration
-	Cache CacheConfig `json:"cache"`
+	Cache cache.Config `json:"cache"`
 
 	// KMS configuration
 	KMS crypto.KMSConfig `json:"kms"`
@@ -750,13 +753,6 @@ type serverConfigV28 struct {
 
 // serverConfigV29 is just like version '28'.
 type serverConfigV29 serverConfigV28
-
-// compressionConfig represents the compression settings.
-type compressionConfig struct {
-	Enabled    bool     `json:"enabled"`
-	Extensions []string `json:"extensions"`
-	MimeTypes  []string `json:"mime-types"`
-}
 
 // serverConfigV30 is just like version '29', stores additionally
 // extensions and mimetypes fields for compression.
@@ -772,7 +768,7 @@ type serverConfigV30 struct {
 	StorageClass storageClassConfig `json:"storageclass"`
 
 	// Cache configuration
-	Cache CacheConfig `json:"cache"`
+	Cache cache.Config `json:"cache"`
 
 	// KMS configuration
 	KMS crypto.KMSConfig `json:"kms"`
@@ -784,7 +780,7 @@ type serverConfigV30 struct {
 	Logger loggerConfig `json:"logger"`
 
 	// Compression configuration
-	Compression compressionConfig `json:"compress"`
+	Compression compress.Config `json:"compress"`
 }
 
 // serverConfigV31 is just like version '30', with OPA and OpenID configuration.
@@ -800,7 +796,7 @@ type serverConfigV31 struct {
 	StorageClass storageClassConfig `json:"storageclass"`
 
 	// Cache configuration
-	Cache CacheConfig `json:"cache"`
+	Cache cache.Config `json:"cache"`
 
 	// KMS configuration
 	KMS crypto.KMSConfig `json:"kms"`
@@ -812,12 +808,12 @@ type serverConfigV31 struct {
 	Logger loggerConfig `json:"logger"`
 
 	// Compression configuration
-	Compression compressionConfig `json:"compress"`
+	Compression compress.Config `json:"compress"`
 
 	// OpenID configuration
 	OpenID struct {
 		// JWKS validator config.
-		JWKS validator.JWKSArgs `json:"jwks"`
+		JWKS openid.JWKSArgs `json:"jwks"`
 	} `json:"openid"`
 
 	// External policy enforcements.
@@ -855,7 +851,7 @@ type serverConfigV32 struct {
 	StorageClass storageClassConfig `json:"storageclass"`
 
 	// Cache configuration
-	Cache CacheConfig `json:"cache"`
+	Cache cache.Config `json:"cache"`
 
 	// KMS configuration
 	KMS crypto.KMSConfig `json:"kms"`
@@ -867,12 +863,12 @@ type serverConfigV32 struct {
 	Logger loggerConfig `json:"logger"`
 
 	// Compression configuration
-	Compression compressionConfig `json:"compress"`
+	Compression compress.Config `json:"compress"`
 
 	// OpenID configuration
 	OpenID struct {
 		// JWKS validator config.
-		JWKS validator.JWKSArgs `json:"jwks"`
+		JWKS openid.JWKSArgs `json:"jwks"`
 	} `json:"openid"`
 
 	// External policy enforcements.
@@ -884,7 +880,7 @@ type serverConfigV32 struct {
 	} `json:"policy"`
 }
 
-// serverConfigV33 is just like version '32', removes clientID from NATS and MQTT, and adds queueDir, queueLimit with MQTT.
+// serverConfigV33 is just like version '32', removes clientID from NATS and MQTT, and adds queueDir, queueLimit in all notification targets.
 type serverConfigV33 struct {
 	quick.Config `json:"-"` // ignore interfaces
 
@@ -899,7 +895,7 @@ type serverConfigV33 struct {
 	StorageClass storageClassConfig `json:"storageclass"`
 
 	// Cache configuration
-	Cache CacheConfig `json:"cache"`
+	Cache cache.Config `json:"cache"`
 
 	// KMS configuration
 	KMS crypto.KMSConfig `json:"kms"`
@@ -911,12 +907,12 @@ type serverConfigV33 struct {
 	Logger loggerConfig `json:"logger"`
 
 	// Compression configuration
-	Compression compressionConfig `json:"compress"`
+	Compression compress.Config `json:"compress"`
 
 	// OpenID configuration
 	OpenID struct {
 		// JWKS validator config.
-		JWKS validator.JWKSArgs `json:"jwks"`
+		JWKS openid.JWKSArgs `json:"jwks"`
 	} `json:"openid"`
 
 	// External policy enforcements.
@@ -926,4 +922,6 @@ type serverConfigV33 struct {
 
 		// Add new external policy enforcements here.
 	} `json:"policy"`
+
+	LDAPServerConfig xldap.Config `json:"ldapserverconfig"`
 }

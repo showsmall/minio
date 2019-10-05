@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import (
 	"time"
 
 	"github.com/minio/highwayhash"
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 	"github.com/minio/minio/cmd/logger/message/log"
 )
 
@@ -54,6 +54,8 @@ const (
 )
 
 var trimStrings []string
+
+var globalDeploymentID string
 
 // TimeFormat - logging time format.
 const TimeFormat string = "15:04:05 MST 01/02/2006"
@@ -137,9 +139,9 @@ func IsQuiet() bool {
 	return quietFlag
 }
 
-// RegisterUIError registers the specified rendering function. This latter
+// RegisterError registers the specified rendering function. This latter
 // will be called for a pretty rendering of fatal errors.
-func RegisterUIError(f func(string, error, bool) string) {
+func RegisterError(f func(string, error, bool) string) {
 	errorFmtFunc = f
 }
 
@@ -152,6 +154,11 @@ func uniqueEntries(paths []string) []string {
 		}
 	}
 	return m.ToSlice()
+}
+
+// SetDeploymentID -- Deployment Id from the main package is set here
+func SetDeploymentID(deploymentID string) {
+	globalDeploymentID = deploymentID
 }
 
 // Init sets the trimStrings to possible GOPATHs
@@ -317,11 +324,14 @@ func logIf(ctx context.Context, err error) {
 
 	// Get the cause for the Error
 	message := err.Error()
-
+	if req.DeploymentID == "" {
+		req.DeploymentID = globalDeploymentID
+	}
 	entry := log.Entry{
 		DeploymentID: req.DeploymentID,
 		Level:        ErrorLvl.String(),
 		RemoteHost:   req.RemoteHost,
+		Host:         req.Host,
 		RequestID:    req.RequestID,
 		UserAgent:    req.UserAgent,
 		Time:         time.Now().UTC().Format(time.RFC3339Nano),

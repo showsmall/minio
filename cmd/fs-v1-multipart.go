@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	jsoniter "github.com/json-iterator/go"
 	"github.com/minio/minio/cmd/logger"
 	mioutil "github.com/minio/minio/pkg/ioutil"
 )
@@ -98,9 +99,8 @@ func (fs *FSObjects) backgroundAppend(ctx context.Context, bucket, object, uploa
 		}
 		partNumber, etag, actualSize, err := fs.decodePartFile(entry)
 		if err != nil {
-			logger.GetReqInfo(ctx).AppendTags("entry", entry)
-			logger.LogIf(ctx, err)
-			return
+			// Skip part files whose name don't match expected format. These could be backend filesystem specific files.
+			continue
 		}
 		if partNumber < nextPartNumber {
 			// Part already appended.
@@ -153,7 +153,7 @@ func (fs *FSObjects) ListMultipartUploads(ctx context.Context, bucket, object, k
 		return result, toObjectErr(err)
 	}
 
-	// S3 spec says uploaIDs should be sorted based on initiated time. ModTime of fs.json
+	// S3 spec says uploadIDs should be sorted based on initiated time. ModTime of fs.json
 	// is the creation time of the uploadID, hence we will use that.
 	var uploads []MultipartInfo
 	for _, uploadID := range uploadIDs {
@@ -164,7 +164,7 @@ func (fs *FSObjects) ListMultipartUploads(ctx context.Context, bucket, object, k
 		}
 		uploads = append(uploads, MultipartInfo{
 			Object:    object,
-			UploadID:  strings.TrimSuffix(uploadID, slashSeparator),
+			UploadID:  strings.TrimSuffix(uploadID, SlashSeparator),
 			Initiated: fi.ModTime(),
 		})
 	}
@@ -327,7 +327,11 @@ func (fs *FSObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 
 	partPath := pathJoin(uploadIDDir, fs.encodePartFile(partID, etag, data.ActualSize()))
 
-	if err = fsRenameFile(ctx, tmpPartPath, partPath); err != nil {
+	// Make sure not to create parent directories if they don't exist - the upload might have been aborted.
+	if err = fsSimpleRenameFile(ctx, tmpPartPath, partPath); err != nil {
+		if err == errFileNotFound || err == errFileAccessDenied {
+			return pi, InvalidUploadID{UploadID: uploadID}
+		}
 		return pi, toObjectErr(err, minioMetaMultipartBucket, partPath)
 	}
 
@@ -389,8 +393,8 @@ func (fs *FSObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 		}
 		partNumber, etag1, _, derr := fs.decodePartFile(entry)
 		if derr != nil {
-			logger.LogIf(ctx, derr)
-			return result, toObjectErr(derr)
+			// Skip part files whose name don't match expected format. These could be backend filesystem specific files.
+			continue
 		}
 		etag2, ok := partsMap[partNumber]
 		if !ok {
@@ -453,7 +457,8 @@ func (fs *FSObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 	}
 	for i, part := range result.Parts {
 		var stat os.FileInfo
-		stat, err = fsStatFile(ctx, pathJoin(uploadIDDir, fs.encodePartFile(part.PartNumber, part.ETag, part.ActualSize)))
+		stat, err = fsStatFile(ctx, pathJoin(uploadIDDir,
+			fs.encodePartFile(part.PartNumber, part.ETag, part.ActualSize)))
 		if err != nil {
 			return result, toObjectErr(err)
 		}
@@ -467,7 +472,13 @@ func (fs *FSObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 		return result, err
 	}
 
-	result.UserDefined = parseFSMetaMap(fsMetaBytes)
+	var fsMeta fsMetaV1
+	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	if err = json.Unmarshal(fsMetaBytes, &fsMeta); err != nil {
+		return result, err
+	}
+
+	result.UserDefined = fsMeta.Meta
 	return result, nil
 }
 
@@ -505,10 +516,7 @@ func (fs *FSObjects) CompleteMultipartUpload(ctx context.Context, bucket string,
 	}
 
 	// Calculate s3 compatible md5sum for complete multipart.
-	s3MD5, err := getCompleteMultipartMD5(ctx, parts)
-	if err != nil {
-		return oi, err
-	}
+	s3MD5 := getCompleteMultipartMD5(parts)
 
 	partSize := int64(-1) // Used later to ensure that all parts sizes are same.
 
@@ -638,7 +646,7 @@ func (fs *FSObjects) CompleteMultipartUpload(ctx context.Context, bucket string,
 	}
 
 	// Hold write lock on the object.
-	destLock := fs.nsMutex.NewNSLock(bucket, object)
+	destLock := fs.nsMutex.NewNSLock(ctx, bucket, object)
 	if err = destLock.GetLock(globalObjectTimeout); err != nil {
 		return oi, err
 	}

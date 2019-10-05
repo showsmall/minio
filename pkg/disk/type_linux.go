@@ -1,7 +1,7 @@
 // +build linux
 
 /*
- * Minio Cloud Storage, (C) 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ var fsType2StringMap = map[string]string{
 	"794c7630": "overlayfs",
 	"2fc12fc1": "zfs",
 	"ff534d42": "cifs",
+	"53464846": "wslfs",
 }
 
 // getFSType returns the filesystem type of the underlying mounted filesystem

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import (
 
 	jwtgo "github.com/dgrijalva/jwt-go"
 	humanize "github.com/dustin/go-humanize"
-	miniogopolicy "github.com/minio/minio-go/pkg/policy"
+	miniogopolicy "github.com/minio/minio-go/v6/pkg/policy"
 	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/policy"
 	"github.com/minio/minio/pkg/policy/condition"
@@ -189,9 +189,7 @@ func testStorageInfoWebHandler(obj ObjectLayer, instanceType string, t TestErrHa
 
 	rec := httptest.NewRecorder()
 
-	storageInfoRequest := AuthArgs{
-		RPCVersion: globalRPCAPIVersion,
-	}
+	storageInfoRequest := &WebGenericArgs{}
 	storageInfoReply := &StorageInfoRep{}
 	req, err := newTestWebRPCRequest("Web.StorageInfo", authorization, storageInfoRequest)
 	if err != nil {
@@ -224,9 +222,7 @@ func testServerInfoWebHandler(obj ObjectLayer, instanceType string, t TestErrHan
 
 	rec := httptest.NewRecorder()
 
-	serverInfoRequest := AuthArgs{
-		RPCVersion: globalRPCAPIVersion,
-	}
+	serverInfoRequest := &WebGenericArgs{}
 	serverInfoReply := &ServerInfoRep{}
 	req, err := newTestWebRPCRequest("Web.ServerInfo", authorization, serverInfoRequest)
 	if err != nil {
@@ -342,7 +338,7 @@ func testDeleteBucketWebHandler(obj ObjectLayer, instanceType string, t TestErrH
 		{"minio", false, "false token", "Authentication failed"},
 		{"minio", false, token, "The specified bucket is not valid"},
 		{bucketName, false, token, ""},
-		{bucketName, true, token, "Bucket not empty"},
+		{bucketName, true, token, "The bucket you tried to delete is not empty"},
 		{bucketName, false, "", "JWT token missing"},
 	}
 
@@ -705,18 +701,21 @@ func testSetAuthWebHandler(obj ObjectLayer, instanceType string, t TestErrHandle
 	}
 
 	testCases := []struct {
-		username string
-		password string
-		success  bool
+		currentAccessKey string
+		currentSecretKey string
+		newAccessKey     string
+		newSecretKey     string
+		success          bool
 	}{
-		{"", "", false},
-		{"1", "1", false},
-		{"azerty", "foooooooooooooo", true},
+		{"", "", "", "", false},
+		{"1", "1", "1", "1", false},
+		{credentials.AccessKey, credentials.SecretKey, "azerty", "bar", false},
+		{credentials.AccessKey, credentials.SecretKey, "azerty", "foooooooooooooo", true},
 	}
 
 	// Iterating over the test cases, calling the function under test and asserting the response.
 	for i, testCase := range testCases {
-		setAuthRequest := SetAuthArgs{AccessKey: testCase.username, SecretKey: testCase.password}
+		setAuthRequest := SetAuthArgs{CurrentAccessKey: testCase.currentAccessKey, CurrentSecretKey: testCase.currentSecretKey, NewAccessKey: testCase.newAccessKey, NewSecretKey: testCase.newSecretKey}
 		setAuthReply := &SetAuthReply{}
 		req, err := newTestWebRPCRequest("Web.SetAuth", authorization, setAuthRequest)
 		if err != nil {
@@ -736,42 +735,6 @@ func testSetAuthWebHandler(obj ObjectLayer, instanceType string, t TestErrHandle
 		if testCase.success && setAuthReply.Token == "" {
 			t.Fatalf("Test %d: Failed to set auth keys", i+1)
 		}
-	}
-}
-
-// Wrapper for calling Get Auth Handler
-func TestWebHandlerGetAuth(t *testing.T) {
-	ExecObjectLayerTest(t, testGetAuthWebHandler)
-}
-
-// testGetAuthWebHandler - Test GetAuth web handler
-func testGetAuthWebHandler(obj ObjectLayer, instanceType string, t TestErrHandler) {
-	// Register the API end points with XL/FS object layer.
-	apiRouter := initTestWebRPCEndPoint(obj)
-	credentials := globalServerConfig.GetCredential()
-
-	rec := httptest.NewRecorder()
-	authorization, err := getWebRPCToken(apiRouter, credentials.AccessKey, credentials.SecretKey)
-	if err != nil {
-		t.Fatal("Cannot authenticate")
-	}
-
-	getAuthRequest := WebGenericArgs{}
-	getAuthReply := &GetAuthReply{}
-	req, err := newTestWebRPCRequest("Web.GetAuth", authorization, getAuthRequest)
-	if err != nil {
-		t.Fatalf("Failed to create HTTP request: <ERROR> %v", err)
-	}
-	apiRouter.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Expected the response status to be 200, but instead found `%d`", rec.Code)
-	}
-	err = getTestWebRPCResponse(rec, &getAuthReply)
-	if err != nil {
-		t.Fatalf("Failed, %v", err)
-	}
-	if getAuthReply.AccessKey != credentials.AccessKey || getAuthReply.SecretKey != credentials.SecretKey {
-		t.Fatalf("Failed to get correct auth keys")
 	}
 }
 
@@ -861,13 +824,14 @@ func testUploadWebHandler(obj ObjectLayer, instanceType string, t TestErrHandler
 
 	test := func(token string, sendContentLength bool) int {
 		rec := httptest.NewRecorder()
-		req, rErr := http.NewRequest("PUT", "/minio/upload/"+bucketName+"/"+objectName, nil)
+		req, rErr := http.NewRequest("PUT", "/minio/upload/"+bucketName+SlashSeparator+objectName, nil)
 		if rErr != nil {
 			t.Fatalf("Cannot create upload request, %v", rErr)
 		}
 
 		req.Header.Set("x-amz-date", "20160814T114029Z")
 		req.Header.Set("Accept", "*/*")
+		req.Header.Set("User-Agent", "Mozilla")
 
 		req.Body = ioutil.NopCloser(bytes.NewReader(content))
 
@@ -963,7 +927,7 @@ func testDownloadWebHandler(obj ObjectLayer, instanceType string, t TestErrHandl
 
 	test := func(token string) (int, []byte) {
 		rec := httptest.NewRecorder()
-		path := "/minio/download/" + bucketName + "/" + objectName + "?token="
+		path := "/minio/download/" + bucketName + SlashSeparator + objectName + "?token="
 		if token != "" {
 			path = path + token
 		}
@@ -973,6 +937,8 @@ func testDownloadWebHandler(obj ObjectLayer, instanceType string, t TestErrHandl
 		if err != nil {
 			t.Fatalf("Cannot create upload request, %v", err)
 		}
+
+		req.Header.Set("User-Agent", "Mozilla")
 
 		apiRouter.ServeHTTP(rec, req)
 		return rec.Code, rec.Body.Bytes()
@@ -1117,6 +1083,8 @@ func testWebHandlerDownloadZip(obj ObjectLayer, instanceType string, t TestErrHa
 		if err != nil {
 			t.Fatalf("Cannot create upload request, %v", err)
 		}
+
+		req.Header.Set("User-Agent", "Mozilla")
 
 		apiRouter.ServeHTTP(rec, req)
 		return rec.Code, rec.Body.Bytes()
@@ -1522,16 +1490,13 @@ func TestWebCheckAuthorization(t *testing.T) {
 	webRPCs := []string{
 		"ServerInfo", "StorageInfo", "MakeBucket",
 		"ListBuckets", "ListObjects", "RemoveObject",
-		"GenerateAuth", "SetAuth", "GetAuth",
+		"GenerateAuth", "SetAuth",
 		"GetBucketPolicy", "SetBucketPolicy", "ListAllBucketPolicies",
 		"PresignedGet",
 	}
 	for _, rpcCall := range webRPCs {
-		args := &AuthArgs{
-			RPCVersion: globalRPCAPIVersion,
-		}
 		reply := &WebGenericRep{}
-		req, nerr := newTestWebRPCRequest("Web."+rpcCall, "Bearer fooauthorization", args)
+		req, nerr := newTestWebRPCRequest("Web."+rpcCall, "Bearer fooauthorization", &WebGenericArgs{})
 		if nerr != nil {
 			t.Fatalf("Test %s: Failed to create HTTP request: <ERROR> %v", rpcCall, nerr)
 		}
@@ -1555,6 +1520,7 @@ func TestWebCheckAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Cannot create upload request, %v", err)
 	}
+	req.Header.Set("User-Agent", "Mozilla")
 	apiRouter.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("Expected the response status to be 403, but instead found `%d`", rec.Code)
@@ -1569,6 +1535,7 @@ func TestWebCheckAuthorization(t *testing.T) {
 	content := []byte("temporary file's content")
 	req, err = http.NewRequest("PUT", "/minio/upload/bucket/object", nil)
 	req.Header.Set("Authorization", "Bearer foo-authorization")
+	req.Header.Set("User-Agent", "Mozilla")
 	req.Header.Set("Content-Length", strconv.Itoa(len(content)))
 	req.Header.Set("x-amz-date", "20160814T114029Z")
 	req.Header.Set("Accept", "*/*")
@@ -1634,7 +1601,7 @@ func TestWebObjectLayerFaultyDisks(t *testing.T) {
 		RepArgs    interface{}
 	}{
 		{"MakeBucket", MakeBucketArgs{BucketName: bucketName}, WebGenericRep{}},
-		{"ListBuckets", AuthArgs{RPCVersion: globalRPCAPIVersion}, ListBucketsRep{}},
+		{"ListBuckets", WebGenericArgs{}, ListBucketsRep{}},
 		{"ListObjects", ListObjectsArgs{BucketName: bucketName, Prefix: ""}, ListObjectsRep{}},
 		{"GetBucketPolicy", GetBucketPolicyArgs{BucketName: bucketName, Prefix: ""}, GetBucketPolicyRep{}},
 		{"SetBucketPolicy", SetBucketPolicyWebArgs{BucketName: bucketName, Prefix: "", Policy: "none"}, WebGenericRep{}},
@@ -1658,9 +1625,7 @@ func TestWebObjectLayerFaultyDisks(t *testing.T) {
 	}
 
 	// Test Web.StorageInfo
-	storageInfoRequest := AuthArgs{
-		RPCVersion: globalRPCAPIVersion,
-	}
+	storageInfoRequest := &WebGenericArgs{}
 	storageInfoReply := &StorageInfoRep{}
 	req, err := newTestWebRPCRequest("Web.StorageInfo", authorization, storageInfoRequest)
 	if err != nil {

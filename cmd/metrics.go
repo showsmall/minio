@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,16 +29,30 @@ var (
 	httpRequestsDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "minio_http_requests_duration_seconds",
-			Help:    "Time taken by requests served by current Minio server instance",
+			Help:    "Time taken by requests served by current MinIO server instance",
 			Buckets: []float64{.001, .003, .005, .1, .5, 1},
 		},
 		[]string{"request_type"},
+	)
+	minioVersionInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "minio",
+			Name:      "version_info",
+			Help:      "Version of current MinIO server instance",
+		},
+		[]string{
+			// current version
+			"version",
+			// commit-id of the current version
+			"commit",
+		},
 	)
 )
 
 func init() {
 	prometheus.MustRegister(httpRequestsDuration)
 	prometheus.MustRegister(newMinioCollector())
+	prometheus.MustRegister(minioVersionInfo)
 }
 
 // newMinioCollector describes the collector
@@ -47,7 +61,7 @@ func init() {
 // to define metric and  help string
 func newMinioCollector() *minioCollector {
 	return &minioCollector{
-		desc: prometheus.NewDesc("minio_stats", "Statistics exposed by Minio server", nil, nil),
+		desc: prometheus.NewDesc("minio_stats", "Statistics exposed by MinIO server", nil, nil),
 	}
 }
 
@@ -64,13 +78,16 @@ func (c *minioCollector) Describe(ch chan<- *prometheus.Desc) {
 // Collect is called by the Prometheus registry when collecting metrics.
 func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 
+	// Expose MinIO's version information
+	minioVersionInfo.WithLabelValues(Version, CommitID).Add(1)
+
 	// Always expose network stats
 
 	// Network Sent/Received Bytes
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc(
 			prometheus.BuildFQName("minio", "network", "sent_bytes_total"),
-			"Total number of bytes sent by current Minio server instance",
+			"Total number of bytes sent by current MinIO server instance",
 			nil, nil),
 		prometheus.CounterValue,
 		float64(globalConnStats.getTotalOutputBytes()),
@@ -78,7 +95,7 @@ func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc(
 			prometheus.BuildFQName("minio", "network", "received_bytes_total"),
-			"Total number of bytes received by current Minio server instance",
+			"Total number of bytes received by current MinIO server instance",
 			nil, nil),
 		prometheus.CounterValue,
 		float64(globalConnStats.getTotalInputBytes()),
@@ -91,7 +108,7 @@ func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(
 			prometheus.NewDesc(
 				prometheus.BuildFQName("minio", "disk", "cache_storage_bytes"),
-				"Total cache capacity on current Minio server instance",
+				"Total cache capacity on current MinIO server instance",
 				nil, nil),
 			prometheus.GaugeValue,
 			float64(cs.Total),
@@ -99,7 +116,7 @@ func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(
 			prometheus.NewDesc(
 				prometheus.BuildFQName("minio", "disk", "cache_storage_free_bytes"),
-				"Total cache available on current Minio server instance",
+				"Total cache available on current MinIO server instance",
 				nil, nil),
 			prometheus.GaugeValue,
 			float64(cs.Free),
@@ -132,41 +149,41 @@ func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 		totalDisks = s.Backend.OfflineDisks + s.Backend.OnlineDisks
 	}
 
-	// Total disk usage by current Minio server instance
+	// Total disk usage by current MinIO server instance
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc(
 			prometheus.BuildFQName("minio", "disk", "storage_used_bytes"),
-			"Total disk storage used by current Minio server instance",
+			"Total disk storage used by current MinIO server instance",
 			nil, nil),
 		prometheus.GaugeValue,
 		float64(s.Used),
 	)
 
-	// Total disk available space seen by Minio server instance
+	// Total disk available space seen by MinIO server instance
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc(
 			prometheus.BuildFQName("minio", "disk", "storage_available_bytes"),
-			"Total disk available space seen by Minio server instance",
+			"Total disk available space seen by MinIO server instance",
 			nil, nil),
 		prometheus.GaugeValue,
 		float64(s.Available),
 	)
 
-	// Total disk space seen by Minio server instance
+	// Total disk space seen by MinIO server instance
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc(
 			prometheus.BuildFQName("minio", "disk", "storage_total_bytes"),
-			"Total disk space seen by Minio server instance",
+			"Total disk space seen by MinIO server instance",
 			nil, nil),
 		prometheus.GaugeValue,
 		float64(s.Total),
 	)
 
-	// Minio Total Disk/Offline Disk
+	// MinIO Total Disk/Offline Disk
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc(
 			prometheus.BuildFQName("minio", "total", "disks"),
-			"Total number of disks for current Minio server instance",
+			"Total number of disks for current MinIO server instance",
 			nil, nil),
 		prometheus.GaugeValue,
 		float64(totalDisks),
@@ -174,7 +191,7 @@ func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc(
 			prometheus.BuildFQName("minio", "offline", "disks"),
-			"Total number of offline disks for current Minio server instance",
+			"Total number of offline disks for current MinIO server instance",
 			nil, nil),
 		prometheus.GaugeValue,
 		float64(offlineDisks),
@@ -182,9 +199,13 @@ func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 func metricsHandler() http.Handler {
+
 	registry := prometheus.NewRegistry()
 
-	err := registry.Register(httpRequestsDuration)
+	err := registry.Register(minioVersionInfo)
+	logger.LogIf(context.Background(), err)
+
+	err = registry.Register(httpRequestsDuration)
 	logger.LogIf(context.Background(), err)
 
 	err = registry.Register(newMinioCollector())
@@ -202,4 +223,17 @@ func metricsHandler() http.Handler {
 				ErrorHandling: promhttp.ContinueOnError,
 			}),
 	)
+
+}
+
+// AuthMiddleware checks if the bearer token is valid and authorized.
+func AuthMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, _, authErr := webRequestAuthenticate(r)
+		if authErr != nil || !claims.VerifyIssuer("prometheus", true) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }

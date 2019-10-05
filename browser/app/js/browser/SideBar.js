@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage (C) 2016, 2018 Minio, Inc.
+ * MinIO Cloud Storage (C) 2016, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import ClickOutHandler from "react-onclickout"
 import { connect } from "react-redux"
 
 import logo from "../../img/logo.svg"
-import Dropdown from "react-bootstrap/lib/Dropdown"
 import BucketSearch from "../buckets/BucketSearch"
 import BucketList from "../buckets/BucketList"
 import Host from "./Host"
@@ -28,8 +27,14 @@ import * as actionsCommon from "./actions"
 import web from "../web"
 
 export const SideBar = ({ sidebarOpen, clickOutside }) => {
+  const onClickOut = e => {
+    if (e.target.classList.contains("feh-trigger")) {
+      return
+    }
+    clickOutside()
+  }
   return (
-    <ClickOutHandler onClickOut={clickOutside}>
+    <ClickOutHandler onClickOut={onClickOut}>
       <div
         className={classNames({
           "fe-sidebar": true,
@@ -62,4 +67,7 @@ const mapDispatchToProps = dispatch => {
   }
 }
 
-export default connect(mapStateToProps, mapDispatchToProps)(SideBar)
+export default connect(
+  mapStateToProps,
+  mapDispatchToProps
+)(SideBar)

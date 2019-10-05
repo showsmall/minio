@@ -1,4 +1,4 @@
-// Minio Cloud Storage, (C) 2015, 2016, 2017, 2018 Minio, Inc.
+// MinIO Cloud Storage, (C) 2015, 2016, 2017, 2018 MinIO, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -249,4 +249,31 @@ func (v *vaultService) UnsealKey(keyID string, sealedKey []byte, ctx Context) (k
 	}
 	copy(key[:], []byte(plainKey))
 	return key, nil
+}
+
+// UpdateKey re-wraps the sealedKey if the master key referenced by the keyID
+// has been changed by the KMS operator - i.e. the master key has been rotated.
+// If the master key hasn't changed since the sealedKey has been created / updated
+// it may return the same sealedKey as rotatedKey.
+//
+// The context must be same context as the one provided while
+// generating the plaintext key / sealedKey.
+func (v *vaultService) UpdateKey(keyID string, sealedKey []byte, ctx Context) (rotatedKey []byte, err error) {
+	var contextStream bytes.Buffer
+	ctx.WriteTo(&contextStream)
+
+	payload := map[string]interface{}{
+		"ciphertext": string(sealedKey),
+		"context":    base64.StdEncoding.EncodeToString(contextStream.Bytes()),
+	}
+	s, err := v.client.Logical().Write(fmt.Sprintf("/transit/rewrap/%s", keyID), payload)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext, ok := s.Data["ciphertext"]
+	if !ok {
+		return nil, errMissingUpdatedKey
+	}
+	rotatedKey = []byte(ciphertext.(string))
+	return rotatedKey, nil
 }

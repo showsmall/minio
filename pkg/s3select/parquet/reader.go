@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ type Reader struct {
 }
 
 // Read - reads single record.
-func (r *Reader) Read() (rec sql.Record, rerr error) {
+func (r *Reader) Read(dst sql.Record) (rec sql.Record, rerr error) {
 	parquetRecord, err := r.reader.Read()
 	if err != nil {
 		if err != io.EOF {
@@ -73,11 +73,20 @@ func (r *Reader) Read() (rec sql.Record, rerr error) {
 		return true
 	}
 
+	// Apply our range
 	parquetRecord.Range(f)
-	return &jsonfmt.Record{KVS: kvs, SelectFormat: sql.SelectFmtParquet}, nil
+
+	// Reuse destination if we can.
+	dstRec, ok := dst.(*jsonfmt.Record)
+	if !ok {
+		dstRec = &jsonfmt.Record{}
+	}
+	dstRec.SelectFormat = sql.SelectFmtParquet
+	dstRec.KVS = kvs
+	return dstRec, nil
 }
 
-// Close - closes underlaying readers.
+// Close - closes underlying readers.
 func (r *Reader) Close() error {
 	return r.reader.Close()
 }

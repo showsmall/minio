@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/xml"
@@ -35,6 +34,7 @@ import (
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
+	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/pkg/policy"
 )
 
@@ -87,7 +87,6 @@ func runAllTests(suite *TestSuiteCommon, c *check) {
 	suite.TestObjectGetAnonymous(c)
 	suite.TestObjectGet(c)
 	suite.TestMultipleObjects(c)
-	suite.TestNotImplemented(c)
 	suite.TestHeader(c)
 	suite.TestPutBucket(c)
 	suite.TestCopyObject(c)
@@ -996,20 +995,6 @@ func (s *TestSuiteCommon) TestMultipleObjects(c *check) {
 	c.Assert(true, bytes.Equal(responseBody, []byte("hello three")))
 }
 
-// TestNotImplemented - validates if object policy is implemented, should return 'NotImplemented'.
-func (s *TestSuiteCommon) TestNotImplemented(c *check) {
-	// Generate a random bucket name.
-	bucketName := getRandomBucketName()
-	request, err := newTestSignedRequest("GET", s.endPoint+"/"+bucketName+"/object?policy",
-		0, nil, s.accessKey, s.secretKey, s.signer)
-	c.Assert(err, nil)
-
-	client := http.Client{Transport: s.transport}
-	response, err := client.Do(request)
-	c.Assert(err, nil)
-	c.Assert(response.StatusCode, http.StatusNotImplemented)
-}
-
 // TestHeader - Validates the error response for an attempt to fetch non-existent object.
 func (s *TestSuiteCommon) TestHeader(c *check) {
 	// generate a random bucket name.
@@ -1111,7 +1096,7 @@ func (s *TestSuiteCommon) TestCopyObject(c *check) {
 	request, err = newTestRequest("PUT", getPutObjectURL(s.endPoint, bucketName, objectName2), 0, nil)
 	c.Assert(err, nil)
 	// setting the "X-Amz-Copy-Source" to allow copying the content of previously uploaded object.
-	request.Header.Set("X-Amz-Copy-Source", url.QueryEscape("/"+bucketName+"/"+objectName))
+	request.Header.Set("X-Amz-Copy-Source", url.QueryEscape(SlashSeparator+bucketName+SlashSeparator+objectName))
 	if s.signer == signerV4 {
 		err = signRequestV4(request, s.accessKey, s.secretKey)
 	} else {
@@ -1177,7 +1162,7 @@ func (s *TestSuiteCommon) TestPutObject(c *check) {
 	c.Assert(response.StatusCode, http.StatusOK)
 	c.Assert(response.ContentLength, int64(len([]byte("hello world"))))
 	var buffer2 bytes.Buffer
-	// retrive the contents of response body.
+	// retrieve the contents of response body.
 	n, err := io.Copy(&buffer2, response.Body)
 	c.Assert(err, nil)
 	c.Assert(n, int64(len([]byte("hello world"))))
@@ -1203,7 +1188,7 @@ func (s *TestSuiteCommon) TestPutObject(c *check) {
 	c.Assert(err, nil)
 	c.Assert(response.StatusCode, http.StatusOK)
 	// The response Etag header should contain Md5sum of an empty string.
-	c.Assert(response.Header.Get("Etag"), "\""+emptyETag+"\"")
+	c.Assert(response.Header.Get(xhttp.ETag), "\""+emptyETag+"\"")
 }
 
 // TestListBuckets - Make request for listing of all buckets.
@@ -1354,7 +1339,37 @@ func (s *TestSuiteCommon) TestPutObjectLongName(c *check) {
 	response, err = client.Do(request)
 	c.Assert(err, nil)
 	c.Assert(response.StatusCode, http.StatusOK)
-	// make long object name.
+
+	//make long object name.
+	longObjName = fmt.Sprintf("%0255d/%0255d/%0255d/%0255d/%0255d", 1, 1, 1, 1, 1)
+	if IsDocker() || IsKubernetes() {
+		longObjName = fmt.Sprintf("%0242d/%0242d/%0242d/%0242d/%0242d", 1, 1, 1, 1, 1)
+	}
+	// create new HTTP request to insert the object.
+	buffer = bytes.NewReader([]byte("hello world"))
+	request, err = newTestSignedRequest("PUT", getPutObjectURL(s.endPoint, bucketName, longObjName),
+		int64(buffer.Len()), buffer, s.accessKey, s.secretKey, s.signer)
+	c.Assert(err, nil)
+	// execute the HTTP request.
+	response, err = client.Do(request)
+	c.Assert(err, nil)
+	c.Assert(response.StatusCode, http.StatusBadRequest)
+	verifyError(c, response, "KeyTooLongError", "Your key is too long", http.StatusBadRequest)
+
+	// make object name with prefix as slash
+	longObjName = fmt.Sprintf("/%0255d/%0255d", 1, 1)
+	buffer = bytes.NewReader([]byte("hello world"))
+	// create new HTTP request to insert the object.
+	request, err = newTestSignedRequest("PUT", getPutObjectURL(s.endPoint, bucketName, longObjName),
+		int64(buffer.Len()), buffer, s.accessKey, s.secretKey, s.signer)
+	c.Assert(err, nil)
+	// execute the HTTP request.
+	response, err = client.Do(request)
+	c.Assert(err, nil)
+	c.Assert(response.StatusCode, http.StatusBadRequest)
+	verifyError(c, response, "XMinioInvalidObjectName", "Object name contains a leading slash.", http.StatusBadRequest)
+
+	//make object name as unsuported
 	longObjName = fmt.Sprintf("%0256d", 1)
 	buffer = bytes.NewReader([]byte("hello world"))
 	request, err = newTestSignedRequest("PUT", getPutObjectURL(s.endPoint, bucketName, longObjName),
@@ -1431,7 +1446,7 @@ func (s *TestSuiteCommon) TestHeadOnObjectLastModified(c *check) {
 	// verify the status of the HTTP response.
 	c.Assert(response.StatusCode, http.StatusOK)
 
-	// retrive the info of last modification time of the object from the response header.
+	// retrieve the info of last modification time of the object from the response header.
 	lastModified := response.Header.Get("Last-Modified")
 	// Parse it into time.Time structure.
 	t, err := time.Parse(http.TimeFormat, lastModified)
@@ -1790,8 +1805,8 @@ func (s *TestSuiteCommon) TestPutBucketErrors(c *check) {
 		http.StatusConflict)
 
 	// request for ACL.
-	// Since Minio server doesn't support ACL's the request is expected to fail with  "NotImplemented" error message.
-	request, err = newTestSignedRequest("PUT", s.endPoint+"/"+bucketName+"?acl",
+	// Since MinIO server doesn't support ACL's the request is expected to fail with  "NotImplemented" error message.
+	request, err = newTestSignedRequest("PUT", s.endPoint+SlashSeparator+bucketName+"?acl",
 		0, nil, s.accessKey, s.secretKey, s.signer)
 	c.Assert(err, nil)
 
@@ -2725,12 +2740,9 @@ func (s *TestSuiteCommon) TestObjectMultipart(c *check) {
 	c.Assert(response.StatusCode, http.StatusOK)
 	var parts []CompletePart
 	for _, part := range completeUploads.Parts {
-		// For compressed objects, we dont treat E-Tag as checksum.
-		part.ETag = strings.Replace(part.ETag, "-1", "", -1)
 		part.ETag = canonicalizeETag(part.ETag)
 		parts = append(parts, part)
 	}
-	etag, err := getCompleteMultipartMD5(context.Background(), parts)
-	c.Assert(err, nil)
-	c.Assert(canonicalizeETag(response.Header.Get("Etag")), etag)
+	etag := getCompleteMultipartMD5(parts)
+	c.Assert(canonicalizeETag(response.Header.Get(xhttp.ETag)), etag)
 }

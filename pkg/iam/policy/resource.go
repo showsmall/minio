@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package iampolicy
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/minio/minio/pkg/policy/condition"
@@ -56,7 +57,7 @@ func (r Resource) Match(resource string, conditionValues map[string][]string) bo
 			pattern = strings.Replace(pattern, key.VarName(), rvalues[0], -1)
 		}
 	}
-	if strings.HasPrefix(resource, pattern) {
+	if path.Clean(resource) == pattern {
 		return true
 	}
 	return wildcard.Match(pattern, resource)

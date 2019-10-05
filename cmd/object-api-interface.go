@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/minio/minio-go/pkg/encrypt"
+	"github.com/minio/minio-go/v6/pkg/encrypt"
+	"github.com/minio/minio/pkg/lifecycle"
 	"github.com/minio/minio/pkg/madmin"
 	"github.com/minio/minio/pkg/policy"
 )
@@ -73,6 +74,7 @@ type ObjectLayer interface {
 	PutObject(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error)
 	CopyObject(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (objInfo ObjectInfo, err error)
 	DeleteObject(ctx context.Context, bucket, object string) error
+	DeleteObjects(ctx context.Context, bucket string, objects []string) ([]error, error)
 
 	// Multipart operations.
 	ListMultipartUploads(ctx context.Context, bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (result ListMultipartsInfo, err error)
@@ -89,8 +91,10 @@ type ObjectLayer interface {
 	HealFormat(ctx context.Context, dryRun bool) (madmin.HealResultItem, error)
 	HealBucket(ctx context.Context, bucket string, dryRun, remove bool) (madmin.HealResultItem, error)
 	HealObject(ctx context.Context, bucket, object string, dryRun, remove bool, scanMode madmin.HealScanMode) (madmin.HealResultItem, error)
-	ListBucketsHeal(ctx context.Context) (buckets []BucketInfo, err error)
 	HealObjects(ctx context.Context, bucket, prefix string, healObjectFn func(string, string) error) error
+
+	ListBucketsHeal(ctx context.Context) (buckets []BucketInfo, err error)
+	ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result ListObjectsInfo, err error)
 
 	// Policy operations
 	SetBucketPolicy(context.Context, string, *policy.Policy) error
@@ -104,4 +108,9 @@ type ObjectLayer interface {
 
 	// Compression support check.
 	IsCompressionSupported() bool
+
+	// Lifecycle operations
+	SetBucketLifecycle(context.Context, string, *lifecycle.Lifecycle) error
+	GetBucketLifecycle(context.Context, string) (*lifecycle.Lifecycle, error)
+	DeleteBucketLifecycle(context.Context, string) error
 }

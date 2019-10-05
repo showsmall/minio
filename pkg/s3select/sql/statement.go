@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -170,7 +170,11 @@ func (e *SelectStatement) AggregateResult(output Record) error {
 		if err != nil {
 			return err
 		}
-		output.Set(fmt.Sprintf("_%d", i+1), v)
+		if expr.As != "" {
+			output.Set(expr.As, v)
+		} else {
+			output.Set(fmt.Sprintf("_%d", i+1), v)
+		}
 	}
 	return nil
 }
@@ -215,6 +219,7 @@ func (e *SelectStatement) AggregateRow(input Record) error {
 
 // Eval - evaluates the Select statement for the given record. It
 // applies only to non-aggregation queries.
+// The function returns whether the statement passed the WHERE clause and should be outputted.
 func (e *SelectStatement) Eval(input, output Record) (Record, error) {
 	ok, err := e.isPassingWhereClause(input)
 	if err != nil || !ok {
@@ -230,8 +235,8 @@ func (e *SelectStatement) Eval(input, output Record) (Record, error) {
 		if e.limitValue > -1 {
 			e.outputCount++
 		}
-
-		return input, nil
+		output = input.Clone(output)
+		return output, nil
 	}
 
 	for i, expr := range e.selectAST.Expression.Expressions {

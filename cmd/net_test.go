@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 )
 
 func TestMustSplitHostPort(t *testing.T) {
@@ -206,20 +206,22 @@ func TestCheckPortAvailability(t *testing.T) {
 	defer listener.Close()
 
 	testCases := []struct {
+		host        string
 		port        string
 		expectedErr error
 	}{
-		{port, fmt.Errorf("listen tcp :%v: bind: address already in use", port)},
-		{getFreePort(), nil},
+		{"", port, fmt.Errorf("listen tcp :%v: bind: address already in use", port)},
+		{"127.0.0.1", port, fmt.Errorf("listen tcp 127.0.0.1:%v: bind: address already in use", port)},
+		{"", getFreePort(), nil},
 	}
 
 	for _, testCase := range testCases {
-		// On MS Windows, skip checking error case due to https://github.com/golang/go/issues/7598
-		if runtime.GOOS == globalWindowsOSName && testCase.expectedErr != nil {
+		// On MS Windows and Mac, skip checking error case due to https://github.com/golang/go/issues/7598
+		if (runtime.GOOS == globalWindowsOSName || runtime.GOOS == globalMacOSName) && testCase.expectedErr != nil {
 			continue
 		}
 
-		err := checkPortAvailability(testCase.port)
+		err := checkPortAvailability(testCase.host, testCase.port)
 		if testCase.expectedErr == nil {
 			if err != nil {
 				t.Fatalf("error: expected = <nil>, got = %v", err)

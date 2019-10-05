@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 )
 
 var serverPort uint32 = 60000
@@ -154,8 +154,6 @@ func TestNewHTTPListener(t *testing.T) {
 		listener, err := newHTTPListener(
 			testCase.serverAddrs,
 			testCase.tcpKeepAliveTimeout,
-			testCase.readTimeout,
-			testCase.writeTimeout,
 			testCase.updateBytesReadFunc,
 			testCase.updateBytesWrittenFunc,
 		)
@@ -191,8 +189,6 @@ func TestHTTPListenerStartClose(t *testing.T) {
 	for i, testCase := range testCases {
 		listener, err := newHTTPListener(
 			testCase.serverAddrs,
-			time.Duration(0),
-			time.Duration(0),
 			time.Duration(0),
 			nil, nil,
 		)
@@ -235,8 +231,6 @@ func TestHTTPListenerAddr(t *testing.T) {
 		listener, err := newHTTPListener(
 			testCase.serverAddrs,
 			time.Duration(0),
-			time.Duration(0),
-			time.Duration(0),
 			nil, nil,
 		)
 		if err != nil {
@@ -274,8 +268,6 @@ func TestHTTPListenerAddrs(t *testing.T) {
 	for i, testCase := range testCases {
 		listener, err := newHTTPListener(
 			testCase.serverAddrs,
-			time.Duration(0),
-			time.Duration(0),
 			time.Duration(0),
 			nil, nil,
 		)

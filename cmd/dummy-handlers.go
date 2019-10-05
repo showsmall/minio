@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018, 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018, 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -68,12 +68,6 @@ func (api objectAPIHandlers) GetBucketRequestPaymentHandler(w http.ResponseWrite
 
 // GetBucketLoggingHandler - GET bucket logging, a dummy api
 func (api objectAPIHandlers) GetBucketLoggingHandler(w http.ResponseWriter, r *http.Request) {
-	writeSuccessResponseHeadersOnly(w)
-	w.(http.Flusher).Flush()
-}
-
-// GetBucketLifecycleHandler - GET bucket lifecycle, a dummy api
-func (api objectAPIHandlers) GetBucketLifecycleHandler(w http.ResponseWriter, r *http.Request) {
 	writeSuccessResponseHeadersOnly(w)
 	w.(http.Flusher).Flush()
 }

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -545,18 +545,6 @@ func TestFSRemoveMeta(t *testing.T) {
 
 	if _, err := os.Stat((path.Dir(filePath))); !os.IsNotExist(err) {
 		t.Fatalf("`%s` parent directory found though it should have been deleted.", filePath)
-	}
-}
-
-func TestFSIsDir(t *testing.T) {
-	dirPath, err := ioutil.TempDir(globalTestTmpDir, "minio-")
-	if err != nil {
-		t.Fatalf("Unable to create tmp directory %s", err)
-	}
-	defer os.RemoveAll(dirPath)
-
-	if !fsIsDir(context.Background(), dirPath) {
-		t.Fatalf("Expected %s to be a directory", dirPath)
 	}
 }
 
